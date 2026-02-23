@@ -236,6 +236,7 @@ class GatewayConfig(Base):
 class WebSearchConfig(Base):
     """Web search tool configuration."""
 
+    provider: str = "auto"  # auto | brave | exa_mcp | disabled
     api_key: str = ""  # Brave Search API key
     max_results: int = 5
 
@@ -271,6 +272,10 @@ class ToolsConfig(Base):
     enabled: list[str] = Field(default_factory=list)  # Empty means all built-in tools enabled
     restrict_to_workspace: bool = False  # If true, restrict all tool access to workspace directory
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
+    mcp_enabled_servers: list[str] = Field(default_factory=list)  # Empty means all configured MCP servers
+    mcp_disabled_servers: list[str] = Field(default_factory=list)
+    mcp_enabled_tools: list[str] = Field(default_factory=list)  # Match original or wrapped MCP tool names
+    mcp_disabled_tools: list[str] = Field(default_factory=list)
 
 
 class SkillsConfig(Base):

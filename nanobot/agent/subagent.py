@@ -44,6 +44,11 @@ class SubagentManager:
         exec_config: "ExecToolConfig | None" = None,
         restrict_to_workspace: bool = False,
         mcp_servers: dict | None = None,
+        web_search_provider: str = "auto",
+        mcp_enabled_servers: list[str] | None = None,
+        mcp_disabled_servers: list[str] | None = None,
+        mcp_enabled_tools: list[str] | None = None,
+        mcp_disabled_tools: list[str] | None = None,
         enabled_tools: list[str] | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig
@@ -57,13 +62,47 @@ class SubagentManager:
         self.exec_config = exec_config or ExecToolConfig()
         self.restrict_to_workspace = restrict_to_workspace
         self._mcp_servers = mcp_servers or {}
-        self._prefer_exa_mcp_web_search = has_exa_search_mcp(self._mcp_servers)
+        self.web_search_provider = self._normalize_web_search_provider(web_search_provider)
+        self._mcp_enabled_servers = {s.lower() for s in (mcp_enabled_servers or [])}
+        self._mcp_disabled_servers = {s.lower() for s in (mcp_disabled_servers or [])}
+        self._mcp_enabled_tools = {s.lower() for s in (mcp_enabled_tools or [])}
+        self._mcp_disabled_tools = {s.lower() for s in (mcp_disabled_tools or [])}
+        exa_candidates = {
+            name: cfg
+            for name, cfg in self._mcp_servers.items()
+            if self._mcp_server_enabled(name)
+        }
+        self._exa_mcp_configured = has_exa_search_mcp(exa_candidates)
+        self._prefer_exa_mcp_web_search = self._should_try_exa_mcp_search()
         self.enabled_tools = {t.lower() for t in (enabled_tools or [])}
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
     
     def _tool_enabled(self, name: str) -> bool:
         """Return True if tool is enabled by config (empty list means allow all)."""
         return not self.enabled_tools or name.lower() in self.enabled_tools
+
+    def _mcp_server_enabled(self, name: str) -> bool:
+        lname = str(name).lower()
+        if self._mcp_enabled_servers and lname not in self._mcp_enabled_servers:
+            return False
+        if lname in self._mcp_disabled_servers:
+            return False
+        return True
+
+    @staticmethod
+    def _normalize_web_search_provider(value: str | None) -> str:
+        mode = (value or "auto").strip().lower()
+        return mode if mode in {"auto", "brave", "exa_mcp", "disabled"} else "auto"
+
+    def _should_try_exa_mcp_search(self) -> bool:
+        if self.web_search_provider == "disabled":
+            return False
+        if self.web_search_provider == "brave":
+            return False
+        return self._exa_mcp_configured
+
+    def _should_allow_brave_web_search(self) -> bool:
+        return self.web_search_provider in {"auto", "brave"}
 
     async def spawn(
         self,
@@ -140,14 +179,23 @@ class SubagentManager:
 
                 if self._mcp_servers:
                     from nanobot.agent.tools.mcp import connect_mcp_servers
-                    await connect_mcp_servers(self._mcp_servers, tools, mcp_stack)
+                    await connect_mcp_servers(
+                        self._mcp_servers,
+                        tools,
+                        mcp_stack,
+                        enabled_servers=self._mcp_enabled_servers or None,
+                        disabled_servers=self._mcp_disabled_servers or None,
+                        enabled_tools=self._mcp_enabled_tools or None,
+                        disabled_tools=self._mcp_disabled_tools or None,
+                    )
                     if self._prefer_exa_mcp_web_search and self._tool_enabled("web_search"):
                         if not self._install_exa_web_search_alias_if_available(tools):
                             logger.warning(
-                                "Subagent [{}]: Exa MCP configured but 'web_search_exa' not found; using Brave fallback if available",
+                                "Subagent [{}]: Exa MCP is configured but 'web_search_exa' tool was not registered",
                                 task_id,
                             )
-                            self._register_subagent_brave_web_search_fallback(tools)
+                            if self.web_search_provider == "auto":
+                                self._register_subagent_brave_web_search_fallback(tools)
             
                 # Build messages with subagent-specific prompt
                 system_prompt = self._build_subagent_prompt(task)
@@ -220,6 +268,14 @@ class SubagentManager:
     def _register_subagent_web_search_initial(self, tools: ToolRegistry) -> None:
         if not self._tool_enabled("web_search"):
             return
+        if self.web_search_provider == "disabled":
+            logger.info("Subagent: web_search provider is disabled; skipping web_search tool registration")
+            return
+        if self.web_search_provider == "exa_mcp" and not self._exa_mcp_configured:
+            logger.warning(
+                "Subagent: web_search provider is exa_mcp but no Exa MCP server is configured; web_search unavailable"
+            )
+            return
         if self._prefer_exa_mcp_web_search:
             logger.info("Subagent: Exa MCP detected; deferring built-in web_search registration until MCP connects")
             return
@@ -227,6 +283,8 @@ class SubagentManager:
 
     def _register_subagent_brave_web_search_fallback(self, tools: ToolRegistry) -> None:
         if not self._tool_enabled("web_search"):
+            return
+        if not self._should_allow_brave_web_search():
             return
         if tools.has("web_search"):
             return

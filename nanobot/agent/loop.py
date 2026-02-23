@@ -64,6 +64,11 @@ class AgentLoop:
         restrict_to_workspace: bool = False,
         session_manager: SessionManager | None = None,
         mcp_servers: dict | None = None,
+        web_search_provider: str = "auto",
+        mcp_enabled_servers: list[str] | None = None,
+        mcp_disabled_servers: list[str] | None = None,
+        mcp_enabled_tools: list[str] | None = None,
+        mcp_disabled_tools: list[str] | None = None,
         enabled_tools: list[str] | None = None,
         disabled_skills: list[str] | None = None,
     ):
@@ -82,12 +87,23 @@ class AgentLoop:
         self.restrict_to_workspace = restrict_to_workspace
         self.enabled_tools = {t.lower() for t in (enabled_tools or [])}
         self.disabled_skills = {s.lower() for s in (disabled_skills or [])}
+        self.web_search_provider = self._normalize_web_search_provider(web_search_provider)
 
         self.context = ContextBuilder(workspace, disabled_skills=self.disabled_skills)
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self._mcp_servers = mcp_servers or {}
-        self._prefer_exa_mcp_web_search = has_exa_search_mcp(self._mcp_servers)
+        self._mcp_enabled_servers = {s.lower() for s in (mcp_enabled_servers or [])}
+        self._mcp_disabled_servers = {s.lower() for s in (mcp_disabled_servers or [])}
+        self._mcp_enabled_tools = {s.lower() for s in (mcp_enabled_tools or [])}
+        self._mcp_disabled_tools = {s.lower() for s in (mcp_disabled_tools or [])}
+        exa_candidates = {
+            name: cfg
+            for name, cfg in self._mcp_servers.items()
+            if self._mcp_server_enabled(name)
+        }
+        self._exa_mcp_configured = has_exa_search_mcp(exa_candidates)
+        self._prefer_exa_mcp_web_search = self._should_try_exa_mcp_search()
         self.subagents = SubagentManager(
             provider=provider,
             workspace=workspace,
@@ -99,6 +115,11 @@ class AgentLoop:
             exec_config=self.exec_config,
             restrict_to_workspace=restrict_to_workspace,
             mcp_servers=self._mcp_servers,
+            web_search_provider=self.web_search_provider,
+            mcp_enabled_servers=mcp_enabled_servers,
+            mcp_disabled_servers=mcp_disabled_servers,
+            mcp_enabled_tools=mcp_enabled_tools,
+            mcp_disabled_tools=mcp_disabled_tools,
             enabled_tools=enabled_tools,
         )
 
@@ -114,6 +135,29 @@ class AgentLoop:
     def _tool_enabled(self, name: str) -> bool:
         """Return True if tool is enabled by config (empty list means allow all)."""
         return not self.enabled_tools or name.lower() in self.enabled_tools
+
+    def _mcp_server_enabled(self, name: str) -> bool:
+        lname = str(name).lower()
+        if self._mcp_enabled_servers and lname not in self._mcp_enabled_servers:
+            return False
+        if lname in self._mcp_disabled_servers:
+            return False
+        return True
+
+    @staticmethod
+    def _normalize_web_search_provider(value: str | None) -> str:
+        mode = (value or "auto").strip().lower()
+        return mode if mode in {"auto", "brave", "exa_mcp", "disabled"} else "auto"
+
+    def _should_try_exa_mcp_search(self) -> bool:
+        if self.web_search_provider == "disabled":
+            return False
+        if self.web_search_provider == "brave":
+            return False
+        return self._exa_mcp_configured
+
+    def _should_allow_brave_web_search(self) -> bool:
+        return self.web_search_provider in {"auto", "brave"}
 
     def _register_default_tools(self) -> None:
         """Register the default set of tools."""
@@ -150,6 +194,12 @@ class AgentLoop:
     def _register_web_search_tool_initial(self) -> None:
         if not self._tool_enabled("web_search"):
             return
+        if self.web_search_provider == "disabled":
+            logger.info("web_search provider is disabled; skipping web_search tool registration")
+            return
+        if self.web_search_provider == "exa_mcp" and not self._exa_mcp_configured:
+            logger.warning("web_search provider is exa_mcp but no Exa MCP server is configured; web_search unavailable")
+            return
         if self._prefer_exa_mcp_web_search:
             logger.info("Exa MCP detected; deferring built-in web_search registration until MCP connects")
             return
@@ -157,6 +207,8 @@ class AgentLoop:
 
     def _register_brave_web_search_fallback(self) -> None:
         if not self._tool_enabled("web_search"):
+            return
+        if not self._should_allow_brave_web_search():
             return
         if self.tools.has("web_search"):
             return
@@ -184,17 +236,24 @@ class AgentLoop:
         try:
             self._mcp_stack = AsyncExitStack()
             await self._mcp_stack.__aenter__()
-            await connect_mcp_servers(self._mcp_servers, self.tools, self._mcp_stack)
+            await connect_mcp_servers(
+                self._mcp_servers,
+                self.tools,
+                self._mcp_stack,
+                enabled_servers=self._mcp_enabled_servers or None,
+                disabled_servers=self._mcp_disabled_servers or None,
+                enabled_tools=self._mcp_enabled_tools or None,
+                disabled_tools=self._mcp_disabled_tools or None,
+            )
             if self._prefer_exa_mcp_web_search:
                 if not self._install_exa_web_search_alias_if_available():
-                    logger.warning(
-                        "Exa MCP configured but 'web_search_exa' tool not found; falling back to built-in web_search"
-                    )
-                    self._register_brave_web_search_fallback()
+                    logger.warning("Exa MCP is configured but 'web_search_exa' tool was not registered")
+                    if self.web_search_provider == "auto":
+                        self._register_brave_web_search_fallback()
             self._mcp_connected = True
         except Exception as e:
             logger.error("Failed to connect MCP servers (will retry next message): {}", e)
-            if self._prefer_exa_mcp_web_search:
+            if self._prefer_exa_mcp_web_search and self.web_search_provider == "auto":
                 self._register_brave_web_search_fallback()
             if self._mcp_stack:
                 try:

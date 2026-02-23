@@ -54,13 +54,26 @@ class MCPToolWrapper(Tool):
 
 
 async def connect_mcp_servers(
-    mcp_servers: dict, registry: ToolRegistry, stack: AsyncExitStack
+    mcp_servers: dict,
+    registry: ToolRegistry,
+    stack: AsyncExitStack,
+    enabled_servers: set[str] | None = None,
+    disabled_servers: set[str] | None = None,
+    enabled_tools: set[str] | None = None,
+    disabled_tools: set[str] | None = None,
 ) -> None:
     """Connect to configured MCP servers and register their tools."""
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
 
     for name, cfg in mcp_servers.items():
+        lname = str(name).lower()
+        if enabled_servers and lname not in enabled_servers:
+            logger.info("MCP server '{}': skipped (not in tools.mcp_enabled_servers)", name)
+            continue
+        if disabled_servers and lname in disabled_servers:
+            logger.info("MCP server '{}': skipped (in tools.mcp_disabled_servers)", name)
+            continue
         try:
             if cfg.command:
                 params = StdioServerParameters(
@@ -91,11 +104,31 @@ async def connect_mcp_servers(
             await session.initialize()
 
             tools = await session.list_tools()
+            registered = 0
+            skipped = 0
             for tool_def in tools.tools:
+                wrapped_name = f"mcp_{name}_{tool_def.name}".lower()
+                original_name = str(tool_def.name).lower()
+                scoped_name = f"{name}.{tool_def.name}".lower()
+                aliases = {wrapped_name, original_name, scoped_name}
+                if enabled_tools and not (aliases & enabled_tools):
+                    skipped += 1
+                    logger.debug("MCP: skipped tool '{}' from server '{}' (not in allowlist)", tool_def.name, name)
+                    continue
+                if disabled_tools and (aliases & disabled_tools):
+                    skipped += 1
+                    logger.debug("MCP: skipped tool '{}' from server '{}' (in denylist)", tool_def.name, name)
+                    continue
                 wrapper = MCPToolWrapper(session, name, tool_def, tool_timeout=cfg.tool_timeout)
                 registry.register(wrapper)
+                registered += 1
                 logger.debug("MCP: registered tool '{}' from server '{}'", wrapper.name, name)
 
-            logger.info("MCP server '{}': connected, {} tools registered", name, len(tools.tools))
+            logger.info(
+                "MCP server '{}': connected, {} tools registered{}",
+                name,
+                registered,
+                f" ({skipped} filtered)" if skipped else "",
+            )
         except Exception as e:
             logger.error("MCP server '{}': failed to connect: {}", name, e)

@@ -583,7 +583,12 @@ You can keep the framework unchanged and only tune tool/skill availability:
 ```json
 {
   "tools": {
-    "enabled": ["read_file", "write_file", "edit_file", "list_dir", "exec", "web_fetch", "message", "spawn", "cron"]
+    "enabled": ["read_file", "write_file", "edit_file", "list_dir", "exec", "web_search", "web_fetch", "message", "spawn", "cron"],
+    "web": {
+      "search": {
+        "provider": "auto"
+      }
+    }
   },
   "skills": {
     "disabled": ["github", "tmux", "summarize", "clawhub"]
@@ -593,8 +598,10 @@ You can keep the framework unchanged and only tune tool/skill availability:
 
 Notes:
 - `tools.enabled` empty (default) means all built-in tools are enabled.
+- `tools.web.search.provider` supports `auto` / `brave` / `exa_mcp` / `disabled`.
 - `web_search` now requires `tools.web.search.apiKey`; otherwise it is skipped at startup.
 - `skills.disabled` hides selected skills from the agent context.
+- Run `nanobot status` to see tool/skill diagnostics (missing API keys, missing local MCP commands, active MCP filters).
 
 ## Providers
 
@@ -813,6 +820,24 @@ Use `toolTimeout` to override the default 30s per-call timeout for slow servers:
 
 MCP tools are automatically discovered and registered on startup. The LLM can use them alongside built-in tools — no extra configuration needed.
 
+You can also filter which MCP servers/tools are exposed to the agent:
+
+```json
+{
+  "tools": {
+    "mcpEnabledServers": ["exa", "filesystem"],
+    "mcpDisabledServers": ["experimental"],
+    "mcpEnabledTools": ["web_search_exa", "mcp_exa_get_code_context_exa"],
+    "mcpDisabledTools": ["exa.find_similar_links"]
+  }
+}
+```
+
+`mcpEnabledTools` / `mcpDisabledTools` accept either:
+- Original MCP tool name (e.g. `web_search_exa`)
+- Wrapped nanobot tool name (e.g. `mcp_exa_web_search_exa`)
+- Scoped name (`server.tool`, e.g. `exa.web_search_exa`)
+
 #### Use Exa MCP as `web_search` (Brave replacement)
 
 If you configure an Exa MCP server, nanobot will automatically map Exa's `web_search_exa` tool to the built-in `web_search` name (including subagents), so existing prompts and tool habits keep working.
@@ -822,6 +847,11 @@ Example (remote MCP, no local Node process required):
 ```json
 {
   "tools": {
+    "web": {
+      "search": {
+        "provider": "exa_mcp"
+      }
+    },
     "mcpServers": {
       "exa": {
         "url": "https://mcp.exa.ai/mcp?tools=web_search_exa,get_code_context_exa"
@@ -833,8 +863,10 @@ Example (remote MCP, no local Node process required):
 
 Notes:
 
-- Exa MCP takes precedence over the built-in Brave `web_search` tool when detected.
-- If Exa MCP connection fails or `web_search_exa` is unavailable, nanobot falls back to Brave search (when `tools.web.search.apiKey` is configured).
+- `provider: "auto"`: Exa MCP is used when configured, otherwise Brave is used (if API key exists).
+- `provider: "exa_mcp"`: only Exa MCP is used (no Brave fallback).
+- `provider: "brave"`: force built-in Brave `web_search` and ignore Exa aliasing.
+- If `web_search_exa` is unavailable under `auto`, nanobot falls back to Brave search (when `tools.web.search.apiKey` is configured).
 
 
 

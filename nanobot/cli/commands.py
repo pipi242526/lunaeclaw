@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import shutil
 import signal
 from pathlib import Path
 import select
@@ -368,6 +369,11 @@ def gateway(
         restrict_to_workspace=config.tools.restrict_to_workspace,
         session_manager=session_manager,
         mcp_servers=config.tools.mcp_servers,
+        web_search_provider=config.tools.web.search.provider,
+        mcp_enabled_servers=config.tools.mcp_enabled_servers,
+        mcp_disabled_servers=config.tools.mcp_disabled_servers,
+        mcp_enabled_tools=config.tools.mcp_enabled_tools,
+        mcp_disabled_tools=config.tools.mcp_disabled_tools,
         enabled_tools=config.tools.enabled,
         disabled_skills=config.skills.disabled,
     )
@@ -486,6 +492,11 @@ def agent(
         cron_service=cron,
         restrict_to_workspace=config.tools.restrict_to_workspace,
         mcp_servers=config.tools.mcp_servers,
+        web_search_provider=config.tools.web.search.provider,
+        mcp_enabled_servers=config.tools.mcp_enabled_servers,
+        mcp_disabled_servers=config.tools.mcp_disabled_servers,
+        mcp_enabled_tools=config.tools.mcp_enabled_tools,
+        mcp_disabled_tools=config.tools.mcp_disabled_tools,
         enabled_tools=config.tools.enabled,
         disabled_skills=config.skills.disabled,
     )
@@ -965,6 +976,11 @@ def cron_run(
         exec_config=config.tools.exec,
         restrict_to_workspace=config.tools.restrict_to_workspace,
         mcp_servers=config.tools.mcp_servers,
+        web_search_provider=config.tools.web.search.provider,
+        mcp_enabled_servers=config.tools.mcp_enabled_servers,
+        mcp_disabled_servers=config.tools.mcp_disabled_servers,
+        mcp_enabled_tools=config.tools.mcp_enabled_tools,
+        mcp_disabled_tools=config.tools.mcp_disabled_tools,
         enabled_tools=config.tools.enabled,
         disabled_skills=config.skills.disabled,
     )
@@ -1006,6 +1022,7 @@ def cron_run(
 def status():
     """Show nanobot status."""
     from nanobot.config.loader import load_config, get_config_path
+    from nanobot.agent.tools.web import has_exa_search_mcp
 
     config_path = get_config_path()
     config = load_config()
@@ -1037,6 +1054,131 @@ def status():
             else:
                 has_key = bool(p.api_key)
                 console.print(f"{spec.label}: {'[green]✓[/green]' if has_key else '[dim]not set[/dim]'}")
+
+        console.print("\n[bold]Tool & Skill Diagnostics[/bold]")
+
+        builtins = config.tools.enabled or ["(all built-in tools enabled)"]
+        console.print(f"Built-in tools: {', '.join(builtins)}")
+
+        disabled_skills = config.skills.disabled or []
+        console.print(
+            f"Disabled skills: {', '.join(disabled_skills) if disabled_skills else '[dim]none[/dim]'}"
+        )
+
+        provider_mode = (config.tools.web.search.provider or "auto").strip().lower()
+        if provider_mode not in {"auto", "brave", "exa_mcp", "disabled"}:
+            provider_mode = "auto"
+        brave_ready = bool(config.tools.web.search.api_key)
+        enabled_servers = {s.lower() for s in config.tools.mcp_enabled_servers}
+        disabled_servers = {s.lower() for s in config.tools.mcp_disabled_servers}
+        configured_servers = list(config.tools.mcp_servers.keys())
+        active_mcp_servers: dict[str, object] = {}
+        for name in configured_servers:
+            lname = name.lower()
+            if enabled_servers and lname not in enabled_servers:
+                continue
+            if lname in disabled_servers:
+                continue
+            active_mcp_servers[name] = config.tools.mcp_servers[name]
+
+        enabled_mcp_tools = {s.lower() for s in config.tools.mcp_enabled_tools}
+        disabled_mcp_tools = {s.lower() for s in config.tools.mcp_disabled_tools}
+
+        def _mcp_tool_filter_allows(server_name: str, tool_name: str) -> bool:
+            aliases = {
+                tool_name.lower(),
+                f"mcp_{server_name}_{tool_name}".lower(),
+                f"{server_name}.{tool_name}".lower(),
+            }
+            if enabled_mcp_tools and not (aliases & enabled_mcp_tools):
+                return False
+            if disabled_mcp_tools and (aliases & disabled_mcp_tools):
+                return False
+            return True
+
+        active_exa_servers = [
+            name for name, cfg in active_mcp_servers.items()
+            if has_exa_search_mcp({name: cfg})
+        ]
+        exa_configured = bool(active_exa_servers)
+        exa_web_search_exposed = any(
+            _mcp_tool_filter_allows(name, "web_search_exa") for name in active_exa_servers
+        )
+
+        if provider_mode == "disabled":
+            effective_search = "disabled"
+        elif provider_mode == "brave":
+            effective_search = "brave" if brave_ready else "brave (missing api key)"
+        elif provider_mode == "exa_mcp":
+            if exa_configured and exa_web_search_exposed:
+                effective_search = "exa_mcp"
+            elif exa_configured:
+                effective_search = "exa_mcp (web_search_exa filtered out)"
+            else:
+                effective_search = "exa_mcp (missing exa mcp server config)"
+        else:  # auto
+            if exa_configured and exa_web_search_exposed:
+                effective_search = "exa_mcp (auto)"
+            elif brave_ready:
+                effective_search = "brave (auto)"
+            else:
+                if exa_configured:
+                    effective_search = "unavailable (auto: Exa web_search_exa filtered out, no Brave API key)"
+                else:
+                    effective_search = "unavailable (auto: no exa mcp, no brave api key)"
+        console.print(f"Web search provider: {provider_mode}  ->  {effective_search}")
+
+        active_servers: list[str] = []
+        for name in configured_servers:
+            lname = name.lower()
+            if enabled_servers and lname not in enabled_servers:
+                continue
+            if lname in disabled_servers:
+                continue
+            active_servers.append(name)
+        console.print(
+            f"MCP servers: {len(configured_servers)} configured, {len(active_servers)} active after filters"
+        )
+        if config.tools.mcp_enabled_tools or config.tools.mcp_disabled_tools:
+            console.print(
+                "MCP tool filters: "
+                f"allow={len(config.tools.mcp_enabled_tools)} deny={len(config.tools.mcp_disabled_tools)}"
+            )
+
+        for name in configured_servers:
+            cfg = config.tools.mcp_servers[name]
+            lname = name.lower()
+            if enabled_servers and lname not in enabled_servers:
+                console.print(f"  - {name}: [dim]disabled by tools.mcpEnabledServers[/dim]")
+                continue
+            if lname in disabled_servers:
+                console.print(f"  - {name}: [dim]disabled by tools.mcpDisabledServers[/dim]")
+                continue
+            if cfg.url:
+                console.print(f"  - {name}: [green]remote[/green] {cfg.url}")
+                continue
+            if cfg.command:
+                cmd_ok = shutil.which(cfg.command) is not None
+                status_text = "[green]ready[/green]" if cmd_ok else "[red]missing command[/red]"
+                console.print(f"  - {name}: {status_text} `{cfg.command}`")
+                continue
+            console.print(f"  - {name}: [red]invalid config[/red] (missing command/url)")
+
+        warnings: list[str] = []
+        if provider_mode in {"brave", "auto"} and not brave_ready and not exa_configured:
+            warnings.append("web_search unavailable: no Brave API key and no Exa MCP server")
+        if provider_mode == "brave" and not brave_ready:
+            warnings.append("web_search provider=brave but tools.web.search.apiKey is empty")
+        if provider_mode == "exa_mcp" and not exa_configured:
+            warnings.append("web_search provider=exa_mcp but Exa MCP server is not configured")
+        if provider_mode in {"auto", "exa_mcp"} and exa_configured and not exa_web_search_exposed:
+            warnings.append("Exa MCP is active but web_search_exa is filtered by MCP tool filters")
+        if config.tools.enabled and "web_search" not in {t.lower() for t in config.tools.enabled}:
+            warnings.append("web_search is excluded by tools.enabled")
+        if warnings:
+            console.print("[yellow]Warnings:[/yellow]")
+            for item in warnings:
+                console.print(f"  - {item}")
 
 
 # ============================================================================
