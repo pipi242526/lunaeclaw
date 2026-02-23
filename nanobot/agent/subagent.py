@@ -44,6 +44,7 @@ class SubagentManager:
         exec_config: "ExecToolConfig | None" = None,
         restrict_to_workspace: bool = False,
         mcp_servers: dict | None = None,
+        enabled_tools: list[str] | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig
         self.provider = provider
@@ -57,8 +58,13 @@ class SubagentManager:
         self.restrict_to_workspace = restrict_to_workspace
         self._mcp_servers = mcp_servers or {}
         self._prefer_exa_mcp_web_search = has_exa_search_mcp(self._mcp_servers)
+        self.enabled_tools = {t.lower() for t in (enabled_tools or [])}
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
     
+    def _tool_enabled(self, name: str) -> bool:
+        """Return True if tool is enabled by config (empty list means allow all)."""
+        return not self.enabled_tools or name.lower() in self.enabled_tools
+
     async def spawn(
         self,
         task: str,
@@ -113,22 +119,29 @@ class SubagentManager:
                 # Build subagent tools (no message tool, no spawn tool)
                 tools = ToolRegistry()
                 allowed_dir = self.workspace if self.restrict_to_workspace else None
-                tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
-                tools.register(WriteFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
-                tools.register(EditFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
-                tools.register(ListDirTool(workspace=self.workspace, allowed_dir=allowed_dir))
-                tools.register(ExecTool(
-                    working_dir=str(self.workspace),
-                    timeout=self.exec_config.timeout,
-                    restrict_to_workspace=self.restrict_to_workspace,
-                ))
-                self._register_subagent_web_search_initial(tools)
-                tools.register(WebFetchTool())
+                if self._tool_enabled("read_file"):
+                    tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
+                if self._tool_enabled("write_file"):
+                    tools.register(WriteFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
+                if self._tool_enabled("edit_file"):
+                    tools.register(EditFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
+                if self._tool_enabled("list_dir"):
+                    tools.register(ListDirTool(workspace=self.workspace, allowed_dir=allowed_dir))
+                if self._tool_enabled("exec"):
+                    tools.register(ExecTool(
+                        working_dir=str(self.workspace),
+                        timeout=self.exec_config.timeout,
+                        restrict_to_workspace=self.restrict_to_workspace,
+                    ))
+                if self._tool_enabled("web_search"):
+                    self._register_subagent_web_search_initial(tools)
+                if self._tool_enabled("web_fetch"):
+                    tools.register(WebFetchTool())
 
                 if self._mcp_servers:
                     from nanobot.agent.tools.mcp import connect_mcp_servers
                     await connect_mcp_servers(self._mcp_servers, tools, mcp_stack)
-                    if self._prefer_exa_mcp_web_search:
+                    if self._prefer_exa_mcp_web_search and self._tool_enabled("web_search"):
                         if not self._install_exa_web_search_alias_if_available(tools):
                             logger.warning(
                                 "Subagent [{}]: Exa MCP configured but 'web_search_exa' not found; using Brave fallback if available",
@@ -205,20 +218,26 @@ class SubagentManager:
             await self._announce_result(task_id, label, task, error_msg, origin, "error")
 
     def _register_subagent_web_search_initial(self, tools: ToolRegistry) -> None:
+        if not self._tool_enabled("web_search"):
+            return
         if self._prefer_exa_mcp_web_search:
             logger.info("Subagent: Exa MCP detected; deferring built-in web_search registration until MCP connects")
             return
         self._register_subagent_brave_web_search_fallback(tools)
 
     def _register_subagent_brave_web_search_fallback(self, tools: ToolRegistry) -> None:
+        if not self._tool_enabled("web_search"):
+            return
         if tools.has("web_search"):
             return
         if self.brave_api_key:
             tools.register(WebSearchTool(api_key=self.brave_api_key))
             return
-        logger.info("Subagent: BRAVE_API_KEY not set; skipping built-in web_search tool")
+        logger.warning("Subagent: web_search is enabled but tools.web.search.api_key is missing; skipping tool registration")
 
     def _install_exa_web_search_alias_if_available(self, tools: ToolRegistry) -> bool:
+        if not self._tool_enabled("web_search"):
+            return False
         wrapped = install_exa_web_search_alias(tools)
         if not wrapped:
             return False
