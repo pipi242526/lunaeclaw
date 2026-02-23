@@ -13,6 +13,7 @@ from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import LLMProvider
 from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.agent.tools.alias import install_tool_aliases
 from nanobot.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.web import (
@@ -49,6 +50,7 @@ class SubagentManager:
         mcp_disabled_servers: list[str] | None = None,
         mcp_enabled_tools: list[str] | None = None,
         mcp_disabled_tools: list[str] | None = None,
+        tool_aliases: dict[str, str] | None = None,
         enabled_tools: list[str] | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig
@@ -74,6 +76,11 @@ class SubagentManager:
         }
         self._exa_mcp_configured = has_exa_search_mcp(exa_candidates)
         self._prefer_exa_mcp_web_search = self._should_try_exa_mcp_search()
+        self.tool_aliases = {
+            str(k).strip(): str(v).strip()
+            for k, v in (tool_aliases or {}).items()
+            if str(k).strip() and str(v).strip()
+        }
         self.enabled_tools = {t.lower() for t in (enabled_tools or [])}
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
     
@@ -176,6 +183,7 @@ class SubagentManager:
                     self._register_subagent_web_search_initial(tools)
                 if self._tool_enabled("web_fetch"):
                     tools.register(WebFetchTool())
+                self._apply_configured_tool_aliases(tools, stage="startup")
 
                 if self._mcp_servers:
                     from nanobot.agent.tools.mcp import connect_mcp_servers
@@ -196,6 +204,7 @@ class SubagentManager:
                             )
                             if self.web_search_provider == "auto":
                                 self._register_subagent_brave_web_search_fallback(tools)
+                    self._apply_configured_tool_aliases(tools, stage="mcp")
             
                 # Build messages with subagent-specific prompt
                 system_prompt = self._build_subagent_prompt(task)
@@ -301,6 +310,15 @@ class SubagentManager:
             return False
         logger.info("Subagent: registered web_search compatibility alias -> {}", wrapped)
         return True
+
+    def _apply_configured_tool_aliases(self, tools: ToolRegistry, stage: str) -> None:
+        if not self.tool_aliases:
+            return
+        summary = install_tool_aliases(tools, self.tool_aliases)
+        if summary["installed"]:
+            logger.info("Subagent: configured tool aliases applied ({}): {}", stage, ", ".join(summary["installed"]))
+        if summary["unresolved"]:
+            logger.debug("Subagent: configured tool aliases unresolved ({}): {}", stage, ", ".join(summary["unresolved"]))
     
     async def _announce_result(
         self,

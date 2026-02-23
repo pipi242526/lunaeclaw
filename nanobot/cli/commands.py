@@ -374,6 +374,7 @@ def gateway(
         mcp_disabled_servers=config.tools.mcp_disabled_servers,
         mcp_enabled_tools=config.tools.mcp_enabled_tools,
         mcp_disabled_tools=config.tools.mcp_disabled_tools,
+        tool_aliases=config.tools.aliases,
         enabled_tools=config.tools.enabled,
         disabled_skills=config.skills.disabled,
     )
@@ -497,6 +498,7 @@ def agent(
         mcp_disabled_servers=config.tools.mcp_disabled_servers,
         mcp_enabled_tools=config.tools.mcp_enabled_tools,
         mcp_disabled_tools=config.tools.mcp_disabled_tools,
+        tool_aliases=config.tools.aliases,
         enabled_tools=config.tools.enabled,
         disabled_skills=config.skills.disabled,
     )
@@ -981,6 +983,7 @@ def cron_run(
         mcp_disabled_servers=config.tools.mcp_disabled_servers,
         mcp_enabled_tools=config.tools.mcp_enabled_tools,
         mcp_disabled_tools=config.tools.mcp_disabled_tools,
+        tool_aliases=config.tools.aliases,
         enabled_tools=config.tools.enabled,
         disabled_skills=config.skills.disabled,
     )
@@ -1059,6 +1062,18 @@ def status():
 
         builtins = config.tools.enabled or ["(all built-in tools enabled)"]
         console.print(f"Built-in tools: {', '.join(builtins)}")
+        if config.tools.aliases:
+            console.print(f"Tool aliases: {len(config.tools.aliases)} configured")
+            for alias_name, target_name in config.tools.aliases.items():
+                if not str(alias_name).strip() or not str(target_name).strip():
+                    console.print(f"  - {alias_name} -> {target_name}: [red]invalid[/red]")
+                    continue
+                if str(alias_name).strip() == str(target_name).strip():
+                    console.print(f"  - {alias_name} -> {target_name}: [yellow]noop alias[/yellow]")
+                    continue
+                console.print(f"  - {alias_name} -> {target_name}")
+        else:
+            console.print("Tool aliases: [dim]none[/dim]")
 
         disabled_skills = config.skills.disabled or []
         console.print(
@@ -1175,6 +1190,11 @@ def status():
             warnings.append("Exa MCP is active but web_search_exa is filtered by MCP tool filters")
         if config.tools.enabled and "web_search" not in {t.lower() for t in config.tools.enabled}:
             warnings.append("web_search is excluded by tools.enabled")
+        for alias_name, target_name in config.tools.aliases.items():
+            if not str(alias_name).strip() or not str(target_name).strip():
+                warnings.append(f"invalid tool alias entry: {alias_name!r} -> {target_name!r}")
+            elif str(alias_name).strip() == str(target_name).strip():
+                warnings.append(f"noop tool alias: {alias_name} -> {target_name}")
         if warnings:
             console.print("[yellow]Warnings:[/yellow]")
             for item in warnings:

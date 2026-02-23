@@ -584,6 +584,9 @@ You can keep the framework unchanged and only tune tool/skill availability:
 {
   "tools": {
     "enabled": ["read_file", "write_file", "edit_file", "list_dir", "exec", "web_search", "web_fetch", "message", "spawn", "cron"],
+    "aliases": {
+      "search_web": "web_search"
+    },
     "web": {
       "search": {
         "provider": "auto"
@@ -598,6 +601,7 @@ You can keep the framework unchanged and only tune tool/skill availability:
 
 Notes:
 - `tools.enabled` empty (default) means all built-in tools are enabled.
+- `tools.aliases` lets you expose a tool under another name (`alias -> target`), including MCP tools after they connect.
 - `tools.web.search.provider` supports `auto` / `brave` / `exa_mcp` / `disabled`.
 - `web_search` now requires `tools.web.search.apiKey`; otherwise it is skipped at startup.
 - `skills.disabled` hides selected skills from the agent context.
@@ -837,6 +841,19 @@ You can also filter which MCP servers/tools are exposed to the agent:
 - Original MCP tool name (e.g. `web_search_exa`)
 - Wrapped nanobot tool name (e.g. `mcp_exa_web_search_exa`)
 - Scoped name (`server.tool`, e.g. `exa.web_search_exa`)
+
+You can also alias MCP tools to stable names used by your prompts:
+
+```json
+{
+  "tools": {
+    "aliases": {
+      "web_search": "mcp_exa_web_search_exa",
+      "code_search": "mcp_exa_get_code_context_exa"
+    }
+  }
+}
+```
 
 #### Use Exa MCP as `web_search` (Brave replacement)
 

@@ -270,6 +270,7 @@ class ToolsConfig(Base):
     web: WebToolsConfig = Field(default_factory=WebToolsConfig)
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
     enabled: list[str] = Field(default_factory=list)  # Empty means all built-in tools enabled
+    aliases: dict[str, str] = Field(default_factory=dict)  # alias_name -> target_tool_name
     restrict_to_workspace: bool = False  # If true, restrict all tool access to workspace directory
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
     mcp_enabled_servers: list[str] = Field(default_factory=list)  # Empty means all configured MCP servers

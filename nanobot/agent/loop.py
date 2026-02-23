@@ -15,6 +15,7 @@ from nanobot.agent.context import ContextBuilder
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.cron import CronTool
+from nanobot.agent.tools.alias import install_tool_aliases
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.registry import ToolRegistry
@@ -69,6 +70,7 @@ class AgentLoop:
         mcp_disabled_servers: list[str] | None = None,
         mcp_enabled_tools: list[str] | None = None,
         mcp_disabled_tools: list[str] | None = None,
+        tool_aliases: dict[str, str] | None = None,
         enabled_tools: list[str] | None = None,
         disabled_skills: list[str] | None = None,
     ):
@@ -88,6 +90,11 @@ class AgentLoop:
         self.enabled_tools = {t.lower() for t in (enabled_tools or [])}
         self.disabled_skills = {s.lower() for s in (disabled_skills or [])}
         self.web_search_provider = self._normalize_web_search_provider(web_search_provider)
+        self.tool_aliases = {
+            str(k).strip(): str(v).strip()
+            for k, v in (tool_aliases or {}).items()
+            if str(k).strip() and str(v).strip()
+        }
 
         self.context = ContextBuilder(workspace, disabled_skills=self.disabled_skills)
         self.sessions = session_manager or SessionManager(workspace)
@@ -120,6 +127,7 @@ class AgentLoop:
             mcp_disabled_servers=mcp_disabled_servers,
             mcp_enabled_tools=mcp_enabled_tools,
             mcp_disabled_tools=mcp_disabled_tools,
+            tool_aliases=self.tool_aliases,
             enabled_tools=enabled_tools,
         )
 
@@ -190,6 +198,7 @@ class AgentLoop:
             self.tools.register(SpawnTool(manager=self.subagents))
         if self.cron_service and self._tool_enabled("cron"):
             self.tools.register(CronTool(self.cron_service))
+        self._apply_configured_tool_aliases(stage="startup")
 
     def _register_web_search_tool_initial(self) -> None:
         if not self._tool_enabled("web_search"):
@@ -227,6 +236,15 @@ class AgentLoop:
         logger.info("Registered web_search compatibility alias -> {}", wrapped)
         return True
 
+    def _apply_configured_tool_aliases(self, stage: str) -> None:
+        if not self.tool_aliases:
+            return
+        summary = install_tool_aliases(self.tools, self.tool_aliases)
+        if summary["installed"]:
+            logger.info("Configured tool aliases applied ({}): {}", stage, ", ".join(summary["installed"]))
+        if summary["unresolved"]:
+            logger.debug("Configured tool aliases unresolved ({}): {}", stage, ", ".join(summary["unresolved"]))
+
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""
         if self._mcp_connected or self._mcp_connecting or not self._mcp_servers:
@@ -250,6 +268,7 @@ class AgentLoop:
                     logger.warning("Exa MCP is configured but 'web_search_exa' tool was not registered")
                     if self.web_search_provider == "auto":
                         self._register_brave_web_search_fallback()
+            self._apply_configured_tool_aliases(stage="mcp")
             self._mcp_connected = True
         except Exception as e:
             logger.error("Failed to connect MCP servers (will retry next message): {}", e)
