@@ -593,7 +593,7 @@ Config file: `~/.nanobot/config.json`
 | `deepseek` | LLM (DeepSeek direct) | [platform.deepseek.com](https://platform.deepseek.com) |
 | `groq` | LLM + **Voice transcription** (Whisper) | [console.groq.com](https://console.groq.com) |
 | `gemini` | LLM (Gemini direct) | [aistudio.google.com](https://aistudio.google.com) |
-| `minimax` | LLM (MiniMax direct) | [platform.minimax.io](https://platform.minimax.io) |
+| `minimax` | LLM (MiniMax direct) | [platform.minimaxi.com](https://platform.minimaxi.com) |
 | `aihubmix` | LLM (API gateway, access to all models) | [aihubmix.com](https://aihubmix.com) |
 | `siliconflow` | LLM (SiliconFlow/硅基流动) | [siliconflow.cn](https://siliconflow.cn) |
 | `volcengine` | LLM (VolcEngine/火山引擎) | [volcengine.com](https://www.volcengine.com) |
@@ -792,6 +792,29 @@ Use `toolTimeout` to override the default 30s per-call timeout for slow servers:
 ```
 
 MCP tools are automatically discovered and registered on startup. The LLM can use them alongside built-in tools — no extra configuration needed.
+
+#### Use Exa MCP as `web_search` (Brave replacement)
+
+If you configure an Exa MCP server, nanobot will automatically map Exa's `web_search_exa` tool to the built-in `web_search` name (including subagents), so existing prompts and tool habits keep working.
+
+Example (remote MCP, no local Node process required):
+
+```json
+{
+  "tools": {
+    "mcpServers": {
+      "exa": {
+        "url": "https://mcp.exa.ai/mcp?tools=web_search_exa,get_code_context_exa"
+      }
+    }
+  }
+}
+```
+
+Notes:
+
+- Exa MCP takes precedence over the built-in Brave `web_search` tool when detected.
+- If Exa MCP connection fails or `web_search_exa` is unavailable, nanobot falls back to Brave search (when `tools.web.search.apiKey` is configured).
 
 
 
