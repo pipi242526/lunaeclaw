@@ -509,7 +509,9 @@ class TestConsolidationDeduplicationGuard:
 
         consolidation_calls = 0
 
-        async def _fake_consolidate(_session, archive_all: bool = False) -> None:
+        async def _fake_consolidate(
+            _session, archive_all: bool = False, model: str | None = None
+        ) -> None:
             nonlocal consolidation_calls
             consolidation_calls += 1
             await asyncio.sleep(0.05)
@@ -555,7 +557,9 @@ class TestConsolidationDeduplicationGuard:
         active = 0
         max_active = 0
 
-        async def _fake_consolidate(_session, archive_all: bool = False) -> None:
+        async def _fake_consolidate(
+            _session, archive_all: bool = False, model: str | None = None
+        ) -> None:
             nonlocal consolidation_calls, active, max_active
             consolidation_calls += 1
             active += 1
@@ -605,7 +609,9 @@ class TestConsolidationDeduplicationGuard:
 
         started = asyncio.Event()
 
-        async def _slow_consolidate(_session, archive_all: bool = False) -> None:
+        async def _slow_consolidate(
+            _session, archive_all: bool = False, model: str | None = None
+        ) -> None:
             started.set()
             await asyncio.sleep(0.1)
 
@@ -652,7 +658,9 @@ class TestConsolidationDeduplicationGuard:
         release = asyncio.Event()
         archived_count = 0
 
-        async def _fake_consolidate(sess, archive_all: bool = False) -> bool:
+        async def _fake_consolidate(
+            sess, archive_all: bool = False, model: str | None = None
+        ) -> bool:
             nonlocal archived_count
             if archive_all:
                 archived_count = len(sess.messages)
@@ -707,7 +715,9 @@ class TestConsolidationDeduplicationGuard:
         loop.sessions.save(session)
         before_count = len(session.messages)
 
-        async def _failing_consolidate(sess, archive_all: bool = False) -> bool:
+        async def _failing_consolidate(
+            sess, archive_all: bool = False, model: str | None = None
+        ) -> bool:
             if archive_all:
                 return False
             return True
@@ -754,7 +764,9 @@ class TestConsolidationDeduplicationGuard:
         release = asyncio.Event()
         archived_count = -1
 
-        async def _fake_consolidate(sess, archive_all: bool = False) -> bool:
+        async def _fake_consolidate(
+            sess, archive_all: bool = False, model: str | None = None
+        ) -> bool:
             nonlocal archived_count
             if archive_all:
                 archived_count = len(sess.messages)
@@ -815,7 +827,9 @@ class TestConsolidationDeduplicationGuard:
         _ = loop._get_consolidation_lock(session.key)
         assert session.key in loop._consolidation_locks
 
-        async def _ok_consolidate(sess, archive_all: bool = False) -> bool:
+        async def _ok_consolidate(
+            sess, archive_all: bool = False, model: str | None = None
+        ) -> bool:
             return True
 
         loop._consolidate_memory = _ok_consolidate  # type: ignore[method-assign]
