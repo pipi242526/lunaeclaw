@@ -77,6 +77,8 @@ Skills with available="false" need dependencies installed first - you can try in
         now = datetime.now().strftime("%Y-%m-%d %H:%M (%A)")
         tz = _time.strftime("%Z") or "UTC"
         workspace_path = str(self.workspace.expanduser().resolve())
+        from nanobot.utils.helpers import get_global_skills_path
+        global_skills_path = str(get_global_skills_path())
         system = platform.system()
         runtime = f"{'macOS' if system == 'Darwin' else system} {platform.machine()}, Python {platform.python_version()}"
         
@@ -95,6 +97,7 @@ Your workspace is at: {workspace_path}
 - Long-term memory: {workspace_path}/memory/MEMORY.md
 - History log: {workspace_path}/memory/HISTORY.md (grep-searchable)
 - Custom skills: {workspace_path}/skills/{{skill-name}}/SKILL.md
+- Global skills: {global_skills_path}/{{skill-name}}/SKILL.md
 
 IMPORTANT: When responding to direct questions or conversations, reply directly with your text response.
 Only use the 'message' tool when you need to send a message to a specific chat channel (like WhatsApp).

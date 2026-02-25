@@ -23,6 +23,7 @@
 - `nanobot doctor` 已支持修复导向诊断（问题原因 + 修复建议）
 - 聊天内命令 `/model`：按会话切换模型（不改全局默认）
 - 配置支持 `${ENV_VAR}` 占位符，且会自动读取 `~/.nanobot/.env` / `~/.nanobot/env/*.env`
+- 运行目录已收口：`~/.nanobot/config.json`、`~/.nanobot/.env`、`~/.nanobot/env/`、`~/.nanobot/mcp/`、`~/.nanobot/skills/`
 
 ## 2. 当前内置工具盘点（Built-in Tools）
 
@@ -34,7 +35,7 @@
 - `list_dir`：列目录内容
 - `exec`：执行 shell 命令
 - `web_search`：联网搜索（当前可选 Brave / Exa MCP）
-- `web_fetch`：抓取网页并提取正文（Readability）
+- `web_fetch`：抓取网页并提取正文（增强版 Readability + HTML fallback + 二进制内容提示）
 - `message`：给用户/渠道发送消息
 - `spawn`：启动子代理执行任务
 - `cron`：定时任务（提醒/任务）
@@ -204,9 +205,9 @@
 - 建议主方案：Exa MCP（搜索 + code context）
 - 保留 Brave 作为 `auto` 模式回退
 
-2. `web_fetch`（建议增强，不一定完全替换）
-- 当前 `web_fetch` 基于 Readability，通用页面够用
-- 当前阶段建议先补充“Fetch/文档解析类 MCP”（轻量）
+2. `web_fetch`（已做内置增强，可继续补强）
+- 当前 `web_fetch` 已重写增强：内容类型识别、HTML 抽取回退、结构化返回、二进制内容提示
+- 当前阶段建议继续保留内置 `web_fetch` 作为默认路径，再按需补充“Fetch/文档解析类 MCP”（轻量）
 - 后续若有明确动态网页操作需求，再增加 Playwright MCP（按 profile 启用）
 - 做法：先新增 MCP 工具，再用 `tools.aliases` 暴露 `web_fetch_plus`，观察使用频率后再决定是否替换默认 `web_fetch`
 

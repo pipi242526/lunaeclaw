@@ -896,7 +896,7 @@ Profiles can provide reusable tool/skill baselines (e.g. `cn_dev`, `research`, `
 ```
 
 For file/image attachment workflows, a lightweight pattern is:
-- keep built-in `web_fetch` for basic web pages
+- keep built-in `web_fetch` (enhanced readability + HTML fallback + binary-content hints) for most web pages
 - add a document/image MCP server (PDF/DOCX/XLSX/PPTX/images)
 - alias its tools to stable names like `doc_read` / `image_read`
 

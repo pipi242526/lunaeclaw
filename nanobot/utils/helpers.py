@@ -15,6 +15,61 @@ def get_data_path() -> Path:
     return ensure_dir(Path.home() / ".nanobot")
 
 
+def get_config_dir() -> Path:
+    """Get the configuration directory (~/.nanobot)."""
+    return get_data_path()
+
+
+def get_config_file() -> Path:
+    """Get the main config file path (~/.nanobot/config.json)."""
+    return get_config_dir() / "config.json"
+
+
+def get_env_dir() -> Path:
+    """Get the env helper directory (~/.nanobot/env)."""
+    return ensure_dir(get_data_path() / "env")
+
+
+def get_env_file() -> Path:
+    """Get the primary env helper file (~/.nanobot/.env)."""
+    return get_data_path() / ".env"
+
+
+def get_mcp_home() -> Path:
+    """Get the MCP runtime home (~/.nanobot/mcp)."""
+    return ensure_dir(get_data_path() / "mcp")
+
+
+def get_mcp_bin_dir() -> Path:
+    """Get the MCP local bin directory (~/.nanobot/mcp/bin)."""
+    return ensure_dir(get_mcp_home() / "bin")
+
+
+def get_mcp_data_dir() -> Path:
+    """Get the MCP local data/cache directory (~/.nanobot/mcp/data)."""
+    return ensure_dir(get_mcp_home() / "data")
+
+
+def get_media_dir() -> Path:
+    """Get the downloaded media directory (~/.nanobot/media)."""
+    return ensure_dir(get_data_path() / "media")
+
+
+def get_history_dir() -> Path:
+    """Get CLI history directory (~/.nanobot/history)."""
+    return ensure_dir(get_data_path() / "history")
+
+
+def get_cli_history_file() -> Path:
+    """Get CLI history file path."""
+    return get_history_dir() / "cli_history"
+
+
+def get_bridge_dir() -> Path:
+    """Get bridge working directory (~/.nanobot/bridge)."""
+    return ensure_dir(get_data_path() / "bridge")
+
+
 def get_workspace_path(workspace: str | None = None) -> Path:
     """
     Get the workspace path.
@@ -41,6 +96,11 @@ def get_skills_path(workspace: Path | None = None) -> Path:
     """Get the skills directory within the workspace."""
     ws = workspace or get_workspace_path()
     return ensure_dir(ws / "skills")
+
+
+def get_global_skills_path() -> Path:
+    """Get the global custom skills directory (~/.nanobot/skills)."""
+    return ensure_dir(get_data_path() / "skills")
 
 
 def timestamp() -> str:

@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 from pathlib import Path
+from nanobot.utils.helpers import get_global_skills_path
 
 # Default builtin skills directory (relative to this file)
 BUILTIN_SKILLS_DIR = Path(__file__).parent.parent / "skills"
@@ -26,6 +27,7 @@ class SkillsLoader:
     ):
         self.workspace = workspace
         self.workspace_skills = workspace / "skills"
+        self.global_skills = get_global_skills_path()
         self.builtin_skills = builtin_skills_dir or BUILTIN_SKILLS_DIR
         self.disabled_skills = {s.lower() for s in (disabled_skills or set())}
         self._metadata_cache: dict[str, dict | None] = {}
@@ -56,6 +58,19 @@ class SkillsLoader:
                         if self._is_skill_enabled(skill_dir.name):
                             skills.append({"name": skill_dir.name, "path": str(skill_file), "source": "workspace"})
         
+        # Built-in skills
+        # Global custom skills (~/.nanobot/skills)
+        if self.global_skills.exists():
+            for skill_dir in self.global_skills.iterdir():
+                if skill_dir.is_dir():
+                    skill_file = skill_dir / "SKILL.md"
+                    if (
+                        skill_file.exists()
+                        and self._is_skill_enabled(skill_dir.name)
+                        and not any(s["name"] == skill_dir.name for s in skills)
+                    ):
+                        skills.append({"name": skill_dir.name, "path": str(skill_file), "source": "global"})
+
         # Built-in skills
         if self.builtin_skills and self.builtin_skills.exists():
             for skill_dir in self.builtin_skills.iterdir():
@@ -90,6 +105,11 @@ class SkillsLoader:
         workspace_skill = self.workspace_skills / name / "SKILL.md"
         if workspace_skill.exists():
             return workspace_skill.read_text(encoding="utf-8")
+
+        # Check global custom skills
+        global_skill = self.global_skills / name / "SKILL.md"
+        if global_skill.exists():
+            return global_skill.read_text(encoding="utf-8")
         
         # Check built-in
         if self.builtin_skills:

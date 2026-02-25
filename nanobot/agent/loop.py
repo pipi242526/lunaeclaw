@@ -323,6 +323,16 @@ class AgentLoop:
     def _processing_notice_text() -> str:
         return "处理中，请稍候…"
 
+    @staticmethod
+    def _processing_notice_delay_for_channel(channel: str) -> float:
+        """Return per-channel delay before sending a processing placeholder."""
+        c = (channel or "").lower()
+        if c == "telegram":
+            return 4.0
+        if c in {"discord", "feishu", "qq"}:
+            return 6.0
+        return AgentLoop._CHANNEL_PROCESSING_NOTICE_DELAY_S
+
     def _effective_model_for_session(self, session: Session | None) -> str:
         if not session:
             return self.model
@@ -674,7 +684,7 @@ class AgentLoop:
         if on_progress is None and msg.channel != "cli":
             async def _delayed_notice() -> None:
                 try:
-                    await asyncio.sleep(self._CHANNEL_PROCESSING_NOTICE_DELAY_S)
+                    await asyncio.sleep(self._processing_notice_delay_for_channel(msg.channel))
                     meta = dict(msg.metadata or {})
                     meta["_progress"] = True
                     meta["_progress_kind"] = "processing"

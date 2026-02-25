@@ -1,6 +1,7 @@
 """MCP client: connects to MCP servers and wraps their tools as native nanobot tools."""
 
 import asyncio
+import os
 from contextlib import AsyncExitStack
 from typing import Any
 
@@ -9,6 +10,7 @@ from loguru import logger
 
 from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.utils.helpers import get_mcp_bin_dir, get_mcp_data_dir, get_mcp_home
 
 
 class MCPToolWrapper(Tool):
@@ -65,6 +67,9 @@ async def connect_mcp_servers(
     """Connect to configured MCP servers and register their tools."""
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
+    mcp_home = get_mcp_home()
+    mcp_bin = get_mcp_bin_dir()
+    mcp_data = get_mcp_data_dir()
 
     for name, cfg in mcp_servers.items():
         lname = str(name).lower()
@@ -76,8 +81,17 @@ async def connect_mcp_servers(
             continue
         try:
             if cfg.command:
+                merged_env = dict(cfg.env or {})
+                merged_env.setdefault("NANOBOT_MCP_HOME", str(mcp_home))
+                merged_env.setdefault("NANOBOT_MCP_BIN", str(mcp_bin))
+                merged_env.setdefault("NANOBOT_MCP_DATA", str(mcp_data))
+                # Make locally installed wrappers/scripts discoverable by stdio MCP servers.
+                current_path = merged_env.get("PATH") or os.environ.get("PATH", "")
+                merged_env["PATH"] = (
+                    f"{mcp_bin}{os.pathsep + current_path if current_path else ''}"
+                )
                 params = StdioServerParameters(
-                    command=cfg.command, args=cfg.args, env=cfg.env or None
+                    command=cfg.command, args=cfg.args, env=merged_env or None
                 )
                 read, write = await stack.enter_async_context(stdio_client(params))
             elif cfg.url:

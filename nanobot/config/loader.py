@@ -11,7 +11,8 @@ from nanobot.config.schema import Config
 
 def get_config_path() -> Path:
     """Get the default configuration file path."""
-    return Path.home() / ".nanobot" / "config.json"
+    from nanobot.utils.helpers import get_config_file
+    return get_config_file()
 
 
 def get_data_dir() -> Path:
@@ -97,11 +98,11 @@ def _discover_env_files() -> list[Path]:
                 files.append(p)
         return files
 
-    base = Path.home() / ".nanobot"
-    primary = base / ".env"
+    from nanobot.utils.helpers import get_env_file, get_env_dir
+    primary = get_env_file()
     if primary.exists() and primary.is_file():
         files.append(primary)
-    env_dir = base / "env"
+    env_dir = get_env_dir()
     if env_dir.exists() and env_dir.is_dir():
         files.extend(sorted(p for p in env_dir.glob("*.env") if p.is_file()))
     return files

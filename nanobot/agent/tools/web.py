@@ -14,6 +14,17 @@ from nanobot.agent.tools.base import Tool
 # Shared constants
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7_2) AppleWebKit/537.36"
 MAX_REDIRECTS = 5  # Limit redirects to prevent DoS attacks
+_BINARY_DOC_CTYPES = (
+    "application/pdf",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument",
+    "application/vnd.ms-excel",
+    "application/vnd.ms-powerpoint",
+    "application/octet-stream",
+    "image/",
+    "audio/",
+    "video/",
+)
 
 
 def _strip_tags(text: str) -> str:
@@ -198,8 +209,9 @@ class WebFetchTool(Tool):
         "required": ["url"]
     }
     
-    def __init__(self, max_chars: int = 50000):
+    def __init__(self, max_chars: int = 50000, max_download_bytes: int = 2_000_000):
         self.max_chars = max_chars
+        self.max_download_bytes = max_download_bytes
     
     async def execute(self, url: str, extractMode: str = "markdown", maxChars: int | None = None, **kwargs: Any) -> str:
         from readability import Document
@@ -219,29 +231,124 @@ class WebFetchTool(Tool):
             ) as client:
                 r = await client.get(url, headers={"User-Agent": USER_AGENT})
                 r.raise_for_status()
-            
-            ctype = r.headers.get("content-type", "")
-            
-            # JSON
-            if "application/json" in ctype:
-                text, extractor = json.dumps(r.json(), indent=2, ensure_ascii=False), "json"
-            # HTML
-            elif "text/html" in ctype or r.text[:256].lower().startswith(("<!doctype", "<html")):
-                doc = Document(r.text)
-                content = self._to_markdown(doc.summary()) if extractMode == "markdown" else _strip_tags(doc.summary())
-                text = f"# {doc.title()}\n\n{content}" if doc.title() else content
-                extractor = "readability"
-            else:
-                text, extractor = r.text, "raw"
-            
-            truncated = len(text) > max_chars
+
+            ctype = (r.headers.get("content-type", "") or "").lower()
+            content_len_hdr = r.headers.get("content-length")
+            content_len = int(content_len_hdr) if (content_len_hdr or "").isdigit() else len(r.content)
+
+            if content_len > self.max_download_bytes:
+                return json.dumps(
+                    {
+                        "error": "response_too_large",
+                        "url": url,
+                        "finalUrl": str(r.url),
+                        "status": r.status_code,
+                        "contentType": ctype,
+                        "contentLength": content_len,
+                        "hint": f"Response is {content_len} bytes (> {self.max_download_bytes}). Narrow the URL or use a specialized tool.",
+                    },
+                    ensure_ascii=False,
+                )
+
+            if self._is_binary_like_content(ctype):
+                return json.dumps(
+                    {
+                        "error": "unsupported_binary_content",
+                        "url": url,
+                        "finalUrl": str(r.url),
+                        "status": r.status_code,
+                        "contentType": ctype,
+                        "hint": "Use doc_read for PDF/Office/image attachments, or download and parse with a document/image MCP tool.",
+                    },
+                    ensure_ascii=False,
+                )
+
+            text, extractor, title = self._extract_text(r, extract_mode=extractMode, readability_document=Document)
+            text = _normalize(text) if extractor != "json" else text
+
+            original_length = len(text)
+            truncated = original_length > max_chars
             if truncated:
                 text = text[:max_chars]
-            
-            return json.dumps({"url": url, "finalUrl": str(r.url), "status": r.status_code,
-                              "extractor": extractor, "truncated": truncated, "length": len(text), "text": text}, ensure_ascii=False)
+
+            return json.dumps(
+                {
+                    "url": url,
+                    "finalUrl": str(r.url),
+                    "status": r.status_code,
+                    "contentType": ctype,
+                    "contentLength": content_len,
+                    "extractor": extractor,
+                    "title": title,
+                    "truncated": truncated,
+                    "length": len(text),
+                    "originalLength": original_length,
+                    "text": text,
+                },
+                ensure_ascii=False,
+            )
         except Exception as e:
             return json.dumps({"error": str(e), "url": url}, ensure_ascii=False)
+
+    def _is_binary_like_content(self, content_type: str) -> bool:
+        ctype = (content_type or "").lower()
+        if not ctype:
+            return False
+        return any(ctype.startswith(prefix) for prefix in _BINARY_DOC_CTYPES)
+
+    def _extract_text(
+        self,
+        response: httpx.Response,
+        extract_mode: str,
+        readability_document: Any,
+    ) -> tuple[str, str, str]:
+        """Return (text, extractor, title)."""
+        ctype = (response.headers.get("content-type", "") or "").lower()
+
+        if "application/json" in ctype:
+            try:
+                return json.dumps(response.json(), indent=2, ensure_ascii=False), "json", ""
+            except Exception:
+                # fall through to text/raw parsing if JSON header lies
+                pass
+
+        body_text = response.text or ""
+        probe = body_text[:512].lower()
+        looks_html = "text/html" in ctype or probe.startswith(("<!doctype", "<html")) or "<body" in probe
+
+        if looks_html:
+            title, content, extractor = self._extract_html(body_text, extract_mode=extract_mode, readability_document=readability_document)
+            final_text = f"# {title}\n\n{content}" if (title and extract_mode == "markdown" and content) else (f"{title}\n\n{content}" if title and content and extract_mode != "markdown" else content)
+            return final_text or body_text[: self.max_chars], extractor, title
+
+        return body_text, "raw", ""
+
+    def _extract_html(self, html_text: str, extract_mode: str, readability_document: Any) -> tuple[str, str, str]:
+        """Extract readable content from HTML with fallbacks."""
+        title = ""
+        extractor = "html_fallback"
+        content = ""
+        try:
+            doc = readability_document(html_text)
+            title = (doc.title() or "").strip()
+            summary_html = doc.summary() or ""
+            if summary_html:
+                content = self._to_markdown(summary_html) if extract_mode == "markdown" else _strip_tags(summary_html)
+                extractor = "readability"
+        except Exception:
+            pass
+
+        if not content.strip():
+            body_match = re.search(r"<body[^>]*>([\s\S]*?)</body>", html_text, flags=re.I)
+            source = body_match.group(1) if body_match else html_text
+            content = self._to_markdown(source) if extract_mode == "markdown" else _strip_tags(source)
+            extractor = "html_fallback"
+
+        if not title:
+            m = re.search(r"<title[^>]*>([\s\S]*?)</title>", html_text, flags=re.I)
+            if m:
+                title = _normalize(_strip_tags(m.group(1)))
+        return title, content, extractor
     
     def _to_markdown(self, html: str) -> str:
         """Convert HTML to markdown."""

@@ -149,8 +149,8 @@ def _init_prompt_session() -> None:
     except Exception:
         pass
 
-    history_file = Path.home() / ".nanobot" / "history" / "cli_history"
-    history_file.parent.mkdir(parents=True, exist_ok=True)
+    from nanobot.utils.helpers import get_cli_history_file
+    history_file = get_cli_history_file()
 
     _PROMPT_SESSION = PromptSession(
         history=FileHistory(str(history_file)),
@@ -220,7 +220,13 @@ def onboard():
     """Initialize nanobot configuration and workspace."""
     from nanobot.config.loader import get_config_path, load_config, save_config
     from nanobot.config.schema import Config
-    from nanobot.utils.helpers import get_workspace_path
+    from nanobot.utils.helpers import (
+        get_workspace_path,
+        get_env_dir,
+        get_env_file,
+        get_mcp_home,
+        get_global_skills_path,
+    )
     
     config_path = get_config_path()
     
@@ -246,6 +252,10 @@ def onboard():
     
     # Create workspace
     workspace = get_workspace_path()
+    get_env_dir()
+    get_env_file().touch(exist_ok=True)
+    get_mcp_home()
+    get_global_skills_path()
     
     if not workspace.exists():
         workspace.mkdir(parents=True, exist_ok=True)
@@ -258,10 +268,13 @@ def onboard():
     console.print("\nNext steps:")
     console.print("  1. Add your API key to [cyan]~/.nanobot/config.json[/cyan]")
     console.print("     Get one at: https://openrouter.ai/keys")
-    console.print("  2. Optional: install [cyan]uv[/cyan] to enable document parser MCP ([cyan]uvx[/cyan])")
+    console.print("  2. (Recommended) Put secrets in [cyan]~/.nanobot/.env[/cyan] or [cyan]~/.nanobot/env/*.env[/cyan]")
+    console.print("     Use ${ENV_VAR} placeholders in config.json (apiBase/apiKey/etc.)")
+    console.print("  3. Optional: install [cyan]uv[/cyan] to enable document parser MCP ([cyan]uvx[/cyan])")
     console.print("     Example: [cyan]brew install uv[/cyan]")
-    console.print("  3. Chat: [cyan]nanobot agent -m \"Hello!\"[/cyan]")
-    console.print("\n[dim]Default config now includes Exa MCP search and a docloader MCP template.[/dim]")
+    console.print("  4. Chat: [cyan]nanobot agent -m \"Hello!\"[/cyan]")
+    console.print("\n[dim]Runtime folders: ~/.nanobot/config.json, ~/.nanobot/.env, ~/.nanobot/env/, ~/.nanobot/mcp/, ~/.nanobot/skills/[/dim]")
+    console.print("[dim]Default config now includes Exa MCP search and a docloader MCP template.[/dim]")
     console.print("[dim]Want Telegram/WhatsApp? See: https://github.com/HKUDS/nanobot#-chat-apps[/dim]")
 
 
@@ -826,7 +839,8 @@ def _get_bridge_dir() -> Path:
     import subprocess
     
     # User's bridge location
-    user_bridge = Path.home() / ".nanobot" / "bridge"
+    from nanobot.utils.helpers import get_bridge_dir
+    user_bridge = get_bridge_dir()
     
     # Check if already built
     if (user_bridge / "dist" / "index.js").exists():
@@ -1130,6 +1144,7 @@ def cron_run(
 def status():
     """Show nanobot status."""
     from nanobot.config.loader import load_config, get_config_path, _discover_env_files
+    from nanobot.utils.helpers import get_mcp_home, get_global_skills_path, get_env_dir, get_env_file
     from nanobot.agent.skills import SkillsLoader
     from nanobot.agent.tools.web import has_exa_search_mcp
 
@@ -1141,6 +1156,10 @@ def status():
 
     console.print(f"Config: {config_path} {'[green]✓[/green]' if config_path.exists() else '[red]✗[/red]'}")
     console.print(f"Workspace: {workspace} {'[green]✓[/green]' if workspace.exists() else '[red]✗[/red]'}")
+    console.print(f"Global skills dir: {get_global_skills_path()} {'[green]✓[/green]' if get_global_skills_path().exists() else '[red]✗[/red]'}")
+    console.print(f"MCP home: {get_mcp_home()} {'[green]✓[/green]' if get_mcp_home().exists() else '[red]✗[/red]'}")
+    console.print(f"Env file: {get_env_file()} {'[green]✓[/green]' if get_env_file().exists() else '[dim](not created)[/dim]'}")
+    console.print(f"Env dir: {get_env_dir()} {'[green]✓[/green]' if get_env_dir().exists() else '[red]✗[/red]'}")
     env_files = _discover_env_files()
     if env_files:
         console.print(f"Env files: {len(env_files)} loaded helper file(s)")
@@ -1337,6 +1356,7 @@ def status():
 def doctor():
     """Diagnose configuration/tooling issues and suggest fixes."""
     from nanobot.config.loader import load_config, get_config_path, _discover_env_files
+    from nanobot.utils.helpers import get_mcp_home, get_global_skills_path, get_env_file, get_env_dir
     from nanobot.agent.skills import SkillsLoader
 
     config_path = get_config_path()
@@ -1348,6 +1368,10 @@ def doctor():
     console.print(f"- Config path: {config_path} ({'exists' if config_path.exists() else 'missing'})")
     console.print(f"- Workspace: {workspace} ({'exists' if workspace.exists() else 'missing'})")
     console.print(f"- Active profile: {config.profiles.active or 'none'}")
+    console.print(f"- Global skills dir: {get_global_skills_path()}")
+    console.print(f"- MCP home: {get_mcp_home()}")
+    console.print(f"- Env file: {get_env_file()} ({'exists' if get_env_file().exists() else 'missing'})")
+    console.print(f"- Env dir: {get_env_dir()} ({'exists' if get_env_dir().exists() else 'missing'})")
     env_files = _discover_env_files()
     console.print(f"- Env helper files: {len(env_files)}")
 
