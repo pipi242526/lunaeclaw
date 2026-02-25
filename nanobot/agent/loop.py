@@ -25,6 +25,7 @@ from nanobot.agent.tooling import (
     truncate_tool_output,
 )
 from nanobot.agent.tools.cron import CronTool
+from nanobot.agent.tools.claude_code import ClaudeCodeTool
 from nanobot.agent.tools.alias import install_tool_aliases
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from nanobot.agent.tools.message import MessageTool
@@ -42,7 +43,7 @@ from nanobot.providers.base import LLMProvider
 from nanobot.session.manager import Session, SessionManager
 
 if TYPE_CHECKING:
-    from nanobot.config.schema import ExecToolConfig
+    from nanobot.config.schema import ClaudeCodeToolConfig, ExecToolConfig
     from nanobot.cron.service import CronService
 
 
@@ -72,6 +73,7 @@ class AgentLoop:
         max_tokens: int = 4096,
         memory_window: int = 50,
         exec_config: ExecToolConfig | None = None,
+        claude_code_config: "ClaudeCodeToolConfig | None" = None,
         cron_service: CronService | None = None,
         restrict_to_workspace: bool = False,
         session_manager: SessionManager | None = None,
@@ -95,6 +97,7 @@ class AgentLoop:
         self.max_tokens = max_tokens
         self.memory_window = memory_window
         self.exec_config = exec_config or ExecToolConfig()
+        self.claude_code_config = claude_code_config
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
         self.enabled_tools = normalize_name_set(enabled_tools)
@@ -189,6 +192,14 @@ class AgentLoop:
 
         if self._tool_enabled("web_fetch"):
             self.tools.register(WebFetchTool())
+        if self._tool_enabled("claude_code") and self.claude_code_config and self.claude_code_config.enabled:
+            self.tools.register(
+                ClaudeCodeTool(
+                    workspace=self.workspace,
+                    config=self.claude_code_config,
+                    restrict_to_workspace=self.restrict_to_workspace,
+                )
+            )
         if self._tool_enabled("message"):
             self.tools.register(MessageTool(send_callback=self.bus.publish_outbound))
         if self._tool_enabled("spawn"):

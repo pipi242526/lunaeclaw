@@ -930,6 +930,27 @@ Notes:
 - `provider: "exa_mcp"`: use Exa MCP for `web_search` (recommended/default in this branch).
 - `provider: "disabled"`: disable web search entirely.
 
+#### Optional: Control Claude Code via chat (tmux sessions)
+
+Enable the built-in `claude_code` tool to manage long-running Claude Code sessions from chat (start/send/status/tail/stop). The tool is disabled by default for safety.
+
+```json
+{
+  "tools": {
+    "claudeCode": {
+      "enabled": true,
+      "command": "claude",
+      "tmuxCommand": "tmux",
+      "sessionPrefix": "cc_"
+    }
+  }
+}
+```
+
+Requirements:
+- `tmux` installed on the server
+- Claude Code CLI (`claude`) installed and available on `PATH`
+
 
 
 

@@ -411,6 +411,7 @@ def gateway(
         max_iterations=config.agents.defaults.max_tool_iterations,
         memory_window=config.agents.defaults.memory_window,
         exec_config=config.tools.exec,
+        claude_code_config=config.tools.claude_code,
         cron_service=cron,
         restrict_to_workspace=config.tools.restrict_to_workspace,
         session_manager=session_manager,
@@ -535,6 +536,7 @@ def agent(
         max_iterations=config.agents.defaults.max_tool_iterations,
         memory_window=config.agents.defaults.memory_window,
         exec_config=config.tools.exec,
+        claude_code_config=config.tools.claude_code,
         cron_service=cron,
         restrict_to_workspace=config.tools.restrict_to_workspace,
         mcp_servers=config.tools.mcp_servers,
@@ -1021,6 +1023,7 @@ def cron_run(
         max_iterations=config.agents.defaults.max_tool_iterations,
         memory_window=config.agents.defaults.memory_window,
         exec_config=config.tools.exec,
+        claude_code_config=config.tools.claude_code,
         restrict_to_workspace=config.tools.restrict_to_workspace,
         mcp_servers=config.tools.mcp_servers,
         web_search_provider=config.tools.web.search.provider,
@@ -1134,6 +1137,18 @@ def status():
 
         builtins = config.tools.enabled or ["(all built-in tools enabled)"]
         console.print(f"Built-in tools: {', '.join(builtins)}")
+        ccfg = config.tools.claude_code
+        cc_tool_enabled = bool(ccfg.enabled)
+        cc_tool_whitelisted = (not config.tools.enabled) or ("claude_code" in {t.lower() for t in config.tools.enabled})
+        cc_tmux_ok = shutil.which(ccfg.tmux_command) is not None
+        cc_cmd_ok = shutil.which(ccfg.command) is not None if "/" not in ccfg.command else Path(ccfg.command).expanduser().exists()
+        console.print(
+            "Claude Code tool: "
+            f"{'[green]enabled[/green]' if cc_tool_enabled else '[dim]disabled[/dim]'}"
+            f", whitelist={'yes' if cc_tool_whitelisted else 'no'}"
+            f", tmux={'ok' if cc_tmux_ok else 'missing'}"
+            f", claude={'ok' if cc_cmd_ok else 'missing'}"
+        )
         if config.tools.aliases:
             console.print(f"Tool aliases: {len(config.tools.aliases)} configured")
             for alias_name, target_name in config.tools.aliases.items():
@@ -1314,6 +1329,29 @@ def doctor():
             "web search provider is exa_mcp but MCP server 'exa' is not configured",
             "Add tools.mcpServers.exa.url = https://mcp.exa.ai/mcp?tools=web_search_exa,get_code_context_exa",
         ))
+
+    ccfg = config.tools.claude_code
+    tool_enabled_names = {t.lower() for t in (config.tools.enabled or [])}
+    if ccfg.enabled and tool_enabled_names and "claude_code" not in tool_enabled_names:
+        findings.append((
+            "warn",
+            "tools.claudeCode.enabled=true but `claude_code` is excluded by tools.enabled",
+            "Add `claude_code` to tools.enabled or clear tools.enabled to allow all built-in tools.",
+        ))
+    if ccfg.enabled and shutil.which(ccfg.tmux_command) is None:
+        findings.append((
+            "error",
+            f"Claude Code tool is enabled but tmux command '{ccfg.tmux_command}' is not found",
+            "Install tmux (e.g. `brew install tmux`) or set tools.claudeCode.tmuxCommand correctly.",
+        ))
+    if ccfg.enabled:
+        claude_exists = shutil.which(ccfg.command) is not None if "/" not in ccfg.command else Path(ccfg.command).expanduser().exists()
+        if not claude_exists:
+            findings.append((
+                "error",
+                f"Claude Code tool is enabled but command '{ccfg.command}' is not found",
+                "Install Claude Code CLI or set tools.claudeCode.command to the executable path.",
+            ))
 
     doc_cfg = config.tools.mcp_servers.get("docloader")
     if doc_cfg:

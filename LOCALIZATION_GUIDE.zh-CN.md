@@ -196,6 +196,36 @@
 }
 ```
 
+### 4.3 聊天内控制服务器 Claude Code（tmux 模式，可选）
+
+> 适合你这种“在 TG/聊天里发指令，让服务器上的 Claude Code 持续执行”的场景。
+
+```json
+{
+  "tools": {
+    "claudeCode": {
+      "enabled": true,
+      "command": "claude",
+      "tmuxCommand": "tmux",
+      "sessionPrefix": "cc_",
+      "captureLines": 120,
+      "maxOutputChars": 12000
+    }
+  }
+}
+```
+
+说明：
+
+- 默认是关闭的（`enabled=false`），需要显式开启
+- 依赖本机命令：`tmux`、`claude`
+- 建议配合 `tmux` skill 和新的 `claude-code` skill 一起使用（提高工具调用稳定性）
+- 聊天中可让机器人使用 `claude_code` 工具执行：
+  - `start`（启动会话）
+  - `send`（发送任务）
+  - `status` / `tail`（查看进度）
+  - `stop`（结束会话）
+
 ## 5. 替换建议（优先级从高到低）
 
 ### 5.1 优先替换：搜索与网页抽取

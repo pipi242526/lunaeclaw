@@ -24,3 +24,4 @@ The skill format and metadata structure follow OpenClaw's conventions to maintai
 | `clawhub` | Search and install skills from ClawHub registry |
 | `skill-creator` | Create new skills |
 | `attachment-analyzer` | Analyze images and documents (PDF/Word/PPT/Excel) with MCP document/image tools |
+| `claude-code` | Control Claude Code via tmux sessions from chat (`claude_code` tool) |

@@ -7,6 +7,7 @@ This workspace uses a lightweight default setup.
 - `read_file`, `write_file`, `edit_file`, `list_dir`, `exec`
 - `web_search`, `web_fetch`
 - `message`, `spawn`
+- `claude_code` (optional, disabled by default; tmux + Claude Code CLI required)
 
 ## Optional MCP Enhancements
 
@@ -19,4 +20,3 @@ This workspace uses a lightweight default setup.
 - Keep always-useful skills enabled (e.g. memory, cron, github if `gh` exists)
 - Hide skills that lack local dependencies
 - Prefer profiles to switch bundles instead of editing many fields manually
-

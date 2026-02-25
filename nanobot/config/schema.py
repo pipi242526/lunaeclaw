@@ -263,6 +263,21 @@ class ExecToolConfig(Base):
     timeout: int = 60
 
 
+class ClaudeCodeToolConfig(Base):
+    """Claude Code (tmux session) control tool configuration."""
+
+    enabled: bool = False  # Safe default: require explicit opt-in
+    command: str = "claude"  # Claude Code CLI executable
+    args: list[str] = Field(default_factory=list)  # Extra startup args for `claude`
+    tmux_command: str = "tmux"
+    session_prefix: str = "cc_"
+    default_working_dir: str = ""  # Empty -> workspace
+    timeout: int = 15  # Seconds for tmux subprocess calls
+    startup_wait_ms: int = 800  # Wait before optional initial prompt / first tail
+    capture_lines: int = 120  # Default lines for tail/status preview
+    max_output_chars: int = 12000  # Tool-level output cap before agent-level truncation
+
+
 class MCPServerConfig(Base):
     """MCP server connection configuration (stdio or HTTP)."""
 
@@ -279,6 +294,7 @@ class ToolsConfig(Base):
 
     web: WebToolsConfig = Field(default_factory=WebToolsConfig)
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
+    claude_code: ClaudeCodeToolConfig = Field(default_factory=ClaudeCodeToolConfig)
     enabled: list[str] = Field(default_factory=list)  # Empty means all built-in tools enabled
     aliases: dict[str, str] = Field(default_factory=dict)  # alias_name -> target_tool_name
     restrict_to_workspace: bool = False  # If true, restrict all tool access to workspace directory
