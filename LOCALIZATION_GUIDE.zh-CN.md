@@ -361,6 +361,12 @@ nanobot webui
 http://127.0.0.1:18791/
 ```
 
+可选认证（建议在非本机监听时开启）：
+
+```bash
+nanobot webui --token your_token
+```
+
 当前第一版页面（偏配置管理，不是聊天前端）：
 
 - Dashboard：配置总览、端点数量、启用渠道、轻量诊断

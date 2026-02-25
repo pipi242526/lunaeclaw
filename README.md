@@ -1117,6 +1117,7 @@ Notes:
 - Local-only by default (`127.0.0.1`) for safety
 - Designed as a config/diagnostic panel (not a chat frontend)
 - For deeper diagnostics, keep using `nanobot status` / `nanobot doctor`
+- Optional auth token (HTTP Basic password): `nanobot webui --token your_token`
 
 ## 📁 Project Structure
 

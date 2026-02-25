@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import hmac
 import json
 import threading
 import webbrowser
@@ -143,9 +145,11 @@ def run_webui(
     *,
     config_path: Path | None = None,
     open_browser: bool = False,
+    auth_token: str | None = None,
 ) -> None:
     """Start the local nanobot web UI."""
     cfg_path = (config_path or get_config_path()).expanduser()
+    auth_token = (auth_token or "").strip()
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "nanobot-webui/0.1"
@@ -154,6 +158,9 @@ def run_webui(
             return  # keep CLI clean
 
         def do_GET(self) -> None:  # noqa: N802
+            if not self._auth_ok():
+                self._require_auth()
+                return
             parsed = urlparse(self.path)
             params = parse_qs(parsed.query)
             msg = (params.get("msg") or [""])[0]
@@ -174,6 +181,9 @@ def run_webui(
                 self._send_html(500, self._page("Error", f"<pre>{escape(str(e))}</pre>", tab=""))
 
         def do_POST(self) -> None:  # noqa: N802
+            if not self._auth_ok():
+                self._require_auth()
+                return
             parsed = urlparse(self.path)
             form = self._read_form()
             try:
@@ -215,6 +225,29 @@ def run_webui(
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
+
+        def _auth_ok(self) -> bool:
+            if not auth_token:
+                return True
+            header = self.headers.get("Authorization") or ""
+            if not header.startswith("Basic "):
+                return False
+            encoded = header[6:].strip()
+            try:
+                decoded = base64.b64decode(encoded).decode("utf-8", errors="strict")
+            except Exception:
+                return False
+            _, _, password = decoded.partition(":")
+            return hmac.compare_digest(password, auth_token)
+
+        def _require_auth(self) -> None:
+            body = b"Authentication required"
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Basic realm="nanobot Web UI"')
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
 
         def _redirect(self, path: str, *, msg: str = "", err: str = "") -> None:
             params: dict[str, str] = {}
@@ -343,13 +376,27 @@ def run_webui(
     <div class="top">
       <div class="brand">
         <h1>nanobot Web UI</h1>
-        <p>本地配置管理台（默认只监听 {escape(host)}:{port}）</p>
+        <p>本地配置管理台（默认只监听 {escape(host)}:{port}）{" · 已启用认证" if auth_token else ""}</p>
       </div>
       <nav class="nav">{self._nav(tab)}</nav>
     </div>
     {flash}
     {body}
   </div>
+  <script>
+    async function nbCopy(text) {{
+      try {{
+        await navigator.clipboard.writeText(text);
+      }} catch (e) {{
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+      }}
+    }}
+  </script>
 </body>
 </html>"""
 
@@ -403,10 +450,27 @@ def run_webui(
         def _render_endpoints(self, *, msg: str = "", err: str = "") -> None:
             cfg = self._load_config()
             cards = []
+            switch_rows: list[str] = []
             for name in sorted(cfg.providers.endpoints.keys()):
                 ep = cfg.providers.endpoints[name]
                 models_csv = ", ".join(ep.models or [])
                 headers_json = _pretty_json(ep.extra_headers or {})
+                if ep.models:
+                    for model_name in ep.models[:8]:
+                        cmd = f"/model {name}/{model_name}"
+                        switch_rows.append(
+                            f'<tr><td><code>{escape(name)}</code></td><td><code>{escape(model_name)}</code></td>'
+                            f'<td><code>{escape(cmd)}</code></td>'
+                            f'<td><button type="button" class="btn" data-copy="{escape(cmd)}" onclick="nbCopy(this.dataset.copy)">复制</button></td></tr>'
+                        )
+                else:
+                    hint = f"{name}/<model-name>"
+                    cmd = f"/model {hint}"
+                    switch_rows.append(
+                        f'<tr><td><code>{escape(name)}</code></td><td class="muted">（未限制）</td>'
+                        f'<td><code>{escape(cmd)}</code></td>'
+                        f'<td><button type="button" class="btn" data-copy="{escape(cmd)}" onclick="nbCopy(this.dataset.copy)">复制</button></td></tr>'
+                    )
                 options = "".join(
                     f'<option value="{t}" {"selected" if ep.type == t else ""}>{t}</option>' for t in _ENDPOINT_TYPES
                 )
@@ -461,6 +525,14 @@ def run_webui(
     <button class="btn primary" type="submit">保存默认模型</button>
   </form>
   <div class="muted">聊天里仍可用 <code>/model endpoint/model</code> 会话级切换。</div>
+</section>
+<section class="card" style="margin-top:14px">
+  <h2>聊天内快捷切换命令</h2>
+  <table>
+    <tr><th>Endpoint</th><th>Model</th><th>/model 命令</th><th></th></tr>
+    {''.join(switch_rows) or '<tr><td colspan="4" class="muted">先新增 endpoint；配置 models 后这里会生成快捷命令。</td></tr>'}
+  </table>
+  <div class="muted">这些命令可直接发给机器人会话（TG/Discord/其他渠道）进行会话级模型切换。</div>
 </section>
 """
             body = f'<div class="grid">{helper}{add_form}{"".join(cards) or "<section class=\"card\"><div class=\"muted\">还没有命名端点。先新增一个即可。</div></section>"}</div>'
@@ -701,6 +773,10 @@ def run_webui(
     httpd = ThreadingHTTPServer((host, port), Handler)
     url = f"http://{host}:{port}/"
     print(f"nanobot Web UI listening on {url}")
+    if auth_token:
+        print("Web UI auth: enabled (HTTP Basic, password is your provided token)")
+    else:
+        print("Web UI auth: disabled (set --token or NANOBOT_WEBUI_TOKEN to enable)")
     if host not in {"127.0.0.1", "localhost"}:
         print("Warning: Web UI is not bound to localhost. Expose only behind trusted network/auth.")
     if open_browser:
