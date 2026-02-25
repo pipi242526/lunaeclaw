@@ -79,6 +79,14 @@ class LLMProvider(ABC):
 
             result.append(msg)
         return result
+
+    def prepare_model(self, model: str) -> tuple[bool, str | None]:
+        """Optional preflight for model switching (no network call by default)."""
+        return True, None
+
+    def list_switchable_endpoints(self) -> dict[str, list[str]]:
+        """Optional endpoint/model hints for chat-side model switching UX."""
+        return {}
     
     @abstractmethod
     async def chat(

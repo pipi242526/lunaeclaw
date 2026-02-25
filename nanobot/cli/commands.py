@@ -312,13 +312,12 @@ def _create_workspace_templates(workspace: Path):
     skills_dir.mkdir(exist_ok=True)
 
 
-def _make_provider(config: Config):
-    """Create the appropriate LLM provider from config."""
+def _make_single_provider(config: Config, model: str):
+    """Create a provider for a concrete model (non-endpoint-routed path)."""
     from nanobot.providers.litellm_provider import LiteLLMProvider
     from nanobot.providers.openai_codex_provider import OpenAICodexProvider
     from nanobot.providers.custom_provider import CustomProvider
 
-    model = config.agents.defaults.model
     provider_name = config.get_provider_name(model)
     p = config.get_provider(model)
 
@@ -348,6 +347,22 @@ def _make_provider(config: Config):
         extra_headers=p.extra_headers if p else None,
         provider_name=provider_name,
     )
+
+
+def _make_provider(config: Config):
+    """Create the appropriate LLM provider from config."""
+    model = config.agents.defaults.model
+
+    if config.providers.endpoints:
+        from nanobot.providers.router_provider import RouterProvider
+
+        return RouterProvider(
+            default_model=model,
+            endpoints=config.providers.endpoints,
+            fallback_factory=lambda fallback_model: _make_single_provider(config, fallback_model),
+        )
+
+    return _make_single_provider(config, model)
 
 
 # ============================================================================
@@ -1097,6 +1112,14 @@ def status():
                 has_key = bool(p.api_key)
                 console.print(f"{spec.label}: {'[green]✓[/green]' if has_key else '[dim]not set[/dim]'}")
 
+        if config.providers.endpoints:
+            console.print(f"Named endpoints: {len(config.providers.endpoints)} configured")
+            for name, ep in config.providers.endpoints.items():
+                enabled = bool(getattr(ep, "enabled", True))
+                models_count = len(ep.models or [])
+                tag = "[green]enabled[/green]" if enabled else "[dim]disabled[/dim]"
+                console.print(f"  - {name}: {tag} type={ep.type} models={models_count if models_count else '*'}")
+
         console.print("\n[bold]Tool & Skill Diagnostics[/bold]")
         active_profile = (config.profiles.active or "").strip()
         if active_profile:
@@ -1317,7 +1340,48 @@ def doctor():
                 findings.append(("warn", f"noop tool alias: {a} -> {t}", "Delete the alias or point it to a different target tool."))
 
     active_model = str(config.agents.defaults.model or "")
-    if active_model.startswith("custom/"):
+    if "/" in active_model:
+        ep_name, ep_model = active_model.split("/", 1)
+        ep_cfg = config.providers.endpoints.get(ep_name)
+        if ep_cfg:
+            etype = str(ep_cfg.type or "").strip().lower()
+            supported = {
+                "openai_compatible", "anthropic", "openai", "openrouter", "deepseek", "groq",
+                "zhipu", "dashscope", "vllm", "gemini", "moonshot", "minimax",
+                "aihubmix", "siliconflow", "volcengine",
+            }
+            if not ep_cfg.enabled:
+                findings.append((
+                    "error",
+                    f"default model points to disabled endpoint '{ep_name}'",
+                    f"Enable providers.endpoints.{ep_name}.enabled or switch agents.defaults.model to another endpoint/model.",
+                ))
+            if etype.replace("-", "_") not in supported:
+                findings.append((
+                    "error",
+                    f"endpoint '{ep_name}' uses unsupported type '{ep_cfg.type}'",
+                    "Use openai_compatible or a supported provider type (anthropic/openrouter/openai/... ).",
+                ))
+            if ep_cfg.models and ep_model not in set(ep_cfg.models):
+                findings.append((
+                    "warn",
+                    f"default model '{active_model}' is not listed in providers.endpoints.{ep_name}.models",
+                    "Add the model to the endpoint's models list or clear the list to allow any model.",
+                ))
+            if etype.replace("-", "_") == "openai_compatible" and not ep_cfg.api_base:
+                findings.append((
+                    "warn",
+                    f"endpoint '{ep_name}' is openai_compatible but apiBase is empty",
+                    f"Set providers.endpoints.{ep_name}.apiBase to your OpenAI-compatible endpoint.",
+                ))
+            if ep_cfg.api_key and "${" in str(ep_cfg.api_key):
+                findings.append((
+                    "warn",
+                    f"providers.endpoints.{ep_name}.apiKey contains an unresolved ${'{'}ENV_VAR{'}'} placeholder",
+                    "Check ~/.nanobot/.env or ~/.nanobot/env/*.env and ensure the referenced variable exists.",
+                ))
+
+    if active_model.startswith("custom/") and "custom" not in config.providers.endpoints:
         if not config.providers.custom.api_base:
             findings.append((
                 "warn",

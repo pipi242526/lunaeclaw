@@ -206,6 +206,14 @@ class ProviderConfig(Base):
     extra_headers: dict[str, str] | None = None  # Custom headers (e.g. APP-Code for AiHubMix)
 
 
+class EndpointProviderConfig(ProviderConfig):
+    """Named endpoint for multi-platform model switching."""
+
+    type: str = "openai_compatible"  # openai_compatible | anthropic | openrouter | ...
+    models: list[str] = Field(default_factory=list)  # Optional allowlist; empty means allow any model
+    enabled: bool = True
+
+
 class ProvidersConfig(Base):
     """Configuration for LLM providers."""
 
@@ -226,6 +234,7 @@ class ProvidersConfig(Base):
     volcengine: ProviderConfig = Field(default_factory=ProviderConfig)  # VolcEngine (火山引擎) API gateway
     openai_codex: ProviderConfig = Field(default_factory=ProviderConfig)  # OpenAI Codex (OAuth)
     github_copilot: ProviderConfig = Field(default_factory=ProviderConfig)  # Github Copilot (OAuth)
+    endpoints: dict[str, EndpointProviderConfig] = Field(default_factory=dict)  # Named switchable endpoints
 
 
 class GatewayConfig(Base):

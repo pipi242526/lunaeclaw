@@ -134,6 +134,23 @@ def _slim_config_for_save(data: dict) -> dict:
     if isinstance(skills, dict) and isinstance(skills.get("disabled"), list):
         skills["disabled"] = _dedupe_strings(skills["disabled"])
 
+    providers = data.get("providers")
+    if isinstance(providers, dict):
+        endpoints = providers.get("endpoints")
+        if isinstance(endpoints, dict):
+            cleaned_endpoints: dict[str, dict] = {}
+            for raw_name, raw_cfg in endpoints.items():
+                name = str(raw_name).strip()
+                if not name or not isinstance(raw_cfg, dict):
+                    continue
+                cfg = dict(raw_cfg)
+                cfg_type = str(cfg.get("type") or "openai_compatible").strip().lower()
+                cfg["type"] = cfg_type.replace("-", "_")
+                if isinstance(cfg.get("models"), list):
+                    cfg["models"] = _dedupe_strings(cfg["models"])
+                cleaned_endpoints[name] = cfg
+            providers["endpoints"] = cleaned_endpoints
+
     return data
 
 

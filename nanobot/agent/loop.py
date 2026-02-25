@@ -579,6 +579,17 @@ class AgentLoop:
             arg = cmd_text[6:].strip() if len(cmd_text) >= 6 else ""
             if not arg:
                 source = "session override" if session.metadata.get("model_override") else "default"
+                endpoint_hints = self.provider.list_switchable_endpoints()
+                endpoint_lines: list[str] = []
+                if endpoint_hints:
+                    endpoint_lines.append("\n可切换端点:")
+                    for name, models in list(endpoint_hints.items())[:8]:
+                        if models:
+                            preview = ", ".join(f"`{name}/{m}`" for m in models[:3])
+                            more = f" 等 {len(models)} 个" if len(models) > 3 else ""
+                            endpoint_lines.append(f"- {name}: {preview}{more}")
+                        else:
+                            endpoint_lines.append(f"- {name}: `{name}/<model>` (任意模型名)")
                 return OutboundMessage(
                     channel=msg.channel,
                     chat_id=msg.chat_id,
@@ -589,6 +600,7 @@ class AgentLoop:
                         "用法:\n"
                         "- `/model provider/model-name` 切换当前会话模型\n"
                         "- `/model reset` 恢复默认模型"
+                        + ("\n" + "\n".join(endpoint_lines) if endpoint_lines else "")
                     ),
                 )
             if arg.lower() in {"reset", "default"}:
@@ -598,11 +610,22 @@ class AgentLoop:
                     channel=msg.channel, chat_id=msg.chat_id,
                     content=f"已恢复默认模型: `{self.model}`",
                 )
+            try:
+                ok, detail = self.provider.prepare_model(arg)
+            except Exception as e:
+                ok, detail = False, str(e)
+            if not ok:
+                return OutboundMessage(
+                    channel=msg.channel,
+                    chat_id=msg.chat_id,
+                    content=f"模型切换失败: {detail or '未知错误'}",
+                )
             session.metadata["model_override"] = arg
             self.sessions.save(session)
+            extra = f"\n路由: {detail}" if detail else ""
             return OutboundMessage(
                 channel=msg.channel, chat_id=msg.chat_id,
-                content=f"当前会话模型已切换为: `{arg}`\n提示: 仅影响当前会话（{session.key}）。",
+                content=f"当前会话模型已切换为: `{arg}`\n提示: 仅影响当前会话（{session.key}）。{extra}",
             )
 
         unconsolidated = len(session.messages) - session.last_consolidated
