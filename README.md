@@ -1119,6 +1119,21 @@ Notes:
 - For deeper diagnostics, keep using `nanobot status` / `nanobot doctor`
 - Optional auth token (HTTP Basic password): `nanobot webui --token your_token`
 
+### Docker Compose (Web UI)
+
+Run Web UI in Docker (binds `0.0.0.0:18791` inside the container and maps to host):
+
+```bash
+export NANOBOT_WEBUI_TOKEN=your_token   # optional but recommended
+docker compose --profile webui up -d --build nanobot-webui
+```
+
+Then open:
+
+```text
+http://YOUR_SERVER_IP:18791/
+```
+
 ## 📁 Project Structure
 
 ```
