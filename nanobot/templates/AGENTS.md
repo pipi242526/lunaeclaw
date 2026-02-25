@@ -11,7 +11,7 @@ Follow a lightweight, tool-governed workflow.
 
 ## Tool Routing (Default)
 
-- Search: use `web_search` (configured backend may be Exa MCP or Brave)
+- Search: use `web_search` (Exa MCP compatibility alias in this branch)
 - Web pages/docs: try `web_fetch` first; only escalate to enhanced MCP/browser tools if needed
 - Images/screenshots: use `image_read` when available
 - PDF/Word/PPT/Excel/CSV: use `doc_read` when available
@@ -20,4 +20,3 @@ Follow a lightweight, tool-governed workflow.
 
 - Persistent facts: `memory/MEMORY.md`
 - Event history: `memory/HISTORY.md` (append-only, grep-searchable)
-

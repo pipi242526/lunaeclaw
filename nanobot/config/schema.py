@@ -238,8 +238,8 @@ class GatewayConfig(Base):
 class WebSearchConfig(Base):
     """Web search tool configuration."""
 
-    provider: str = "auto"  # auto | brave | exa_mcp | disabled
-    api_key: str = ""  # Brave Search API key
+    provider: str = "exa_mcp"  # exa_mcp | disabled (auto/brave are treated as exa_mcp for compatibility)
+    api_key: str = ""  # Deprecated (Brave search removed in this branch); kept for config compatibility
     max_results: int = 5
 
 

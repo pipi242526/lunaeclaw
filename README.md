@@ -112,7 +112,7 @@ pip install nanobot-ai
 
 > [!TIP]
 > Set your API key in `~/.nanobot/config.json`.
-> Get API keys: [OpenRouter](https://openrouter.ai/keys) (Global) · [Brave Search](https://brave.com/search/api/) (optional, for web search)
+> Get API keys: [OpenRouter](https://openrouter.ai/keys) (Global)
 
 **1. Initialize**
 
@@ -602,8 +602,8 @@ You can keep the framework unchanged and only tune tool/skill availability:
 Notes:
 - `tools.enabled` empty (default) means all built-in tools are enabled.
 - `tools.aliases` lets you expose a tool under another name (`alias -> target`), including MCP tools after they connect.
-- `tools.web.search.provider` supports `auto` / `brave` / `exa_mcp` / `disabled`.
-- `web_search` now requires `tools.web.search.apiKey`; otherwise it is skipped at startup.
+- `tools.web.search.provider` supports `exa_mcp` / `disabled` (`auto` / `brave` are compatibility aliases and are treated as `exa_mcp` in this branch).
+- `web_search` is provided by Exa MCP (via compatibility alias to `web_search_exa`).
 - `skills.disabled` hides selected skills from the agent context.
 - Run `nanobot status` to see tool/skill diagnostics (missing API keys, missing local MCP commands, active MCP filters).
 
@@ -902,7 +902,7 @@ For file/image attachment workflows, a lightweight pattern is:
 
 For enhanced web extraction without replacing the default path, add an optional MCP fetch tool and alias it as `web_fetch_plus`, then use it only when built-in `web_fetch` fails on a page.
 
-#### Use Exa MCP as `web_search` (Brave replacement)
+#### Use Exa MCP as `web_search`
 
 If you configure an Exa MCP server, nanobot will automatically map Exa's `web_search_exa` tool to the built-in `web_search` name (including subagents), so existing prompts and tool habits keep working.
 
@@ -927,10 +927,9 @@ Example (remote MCP, no local Node process required):
 
 Notes:
 
-- `provider: "auto"`: Exa MCP is used when configured, otherwise Brave is used (if API key exists).
-- `provider: "exa_mcp"`: only Exa MCP is used (no Brave fallback).
-- `provider: "brave"`: force built-in Brave `web_search` and ignore Exa aliasing.
-- If `web_search_exa` is unavailable under `auto`, nanobot falls back to Brave search (when `tools.web.search.apiKey` is configured).
+- `provider: "exa_mcp"`: use Exa MCP for `web_search` (recommended/default in this branch).
+- `provider: "disabled"`: disable web search entirely.
+- `provider: "auto"` / `provider: "brave"`: accepted for compatibility, but treated as `exa_mcp` in this branch.
 
 
 

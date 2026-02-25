@@ -18,7 +18,6 @@ from nanobot.agent.tooling import (
     normalize_name_set,
     normalize_tool_aliases,
     normalize_web_search_provider,
-    should_allow_brave_web_search,
     should_try_exa_mcp_search,
     truncate_tool_output,
 )
@@ -27,7 +26,6 @@ from nanobot.agent.tools.alias import install_tool_aliases
 from nanobot.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.web import (
-    WebSearchTool,
     WebFetchTool,
     has_exa_search_mcp,
     install_exa_web_search_alias,
@@ -52,7 +50,6 @@ class SubagentManager:
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
-        brave_api_key: str | None = None,
         exec_config: "ExecToolConfig | None" = None,
         restrict_to_workspace: bool = False,
         mcp_servers: dict | None = None,
@@ -71,7 +68,6 @@ class SubagentManager:
         self.model = model or provider.get_default_model()
         self.temperature = temperature
         self.max_tokens = max_tokens
-        self.brave_api_key = brave_api_key
         self.exec_config = exec_config or ExecToolConfig()
         self.restrict_to_workspace = restrict_to_workspace
         self._mcp_servers = mcp_servers or {}
@@ -107,9 +103,6 @@ class SubagentManager:
 
     def _should_try_exa_mcp_search(self) -> bool:
         return should_try_exa_mcp_search(self.web_search_provider, self._exa_mcp_configured)
-
-    def _should_allow_brave_web_search(self) -> bool:
-        return should_allow_brave_web_search(self.web_search_provider)
 
     async def spawn(
         self,
@@ -203,8 +196,6 @@ class SubagentManager:
                                 "Subagent [{}]: Exa MCP is configured but 'web_search_exa' tool was not registered",
                                 task_id,
                             )
-                            if self.web_search_provider == "auto":
-                                self._register_subagent_brave_web_search_fallback(tools)
                     self._apply_configured_tool_aliases(tools, stage="mcp")
             
                 # Build messages with subagent-specific prompt
@@ -295,19 +286,7 @@ class SubagentManager:
         if self._prefer_exa_mcp_web_search:
             logger.info("Subagent: Exa MCP detected; deferring built-in web_search registration until MCP connects")
             return
-        self._register_subagent_brave_web_search_fallback(tools)
-
-    def _register_subagent_brave_web_search_fallback(self, tools: ToolRegistry) -> None:
-        if not self._tool_enabled("web_search"):
-            return
-        if not self._should_allow_brave_web_search():
-            return
-        if tools.has("web_search"):
-            return
-        if self.brave_api_key:
-            tools.register(WebSearchTool(api_key=self.brave_api_key))
-            return
-        logger.warning("Subagent: web_search is enabled but tools.web.search.api_key is missing; skipping tool registration")
+        logger.warning("Subagent: web_search enabled but Exa MCP is not configured; web_search unavailable")
 
     def _install_exa_web_search_alias_if_available(self, tools: ToolRegistry) -> bool:
         if not self._tool_enabled("web_search"):

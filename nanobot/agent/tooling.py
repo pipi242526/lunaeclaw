@@ -30,7 +30,12 @@ def normalize_tool_aliases(aliases: Mapping[str, str] | None) -> dict[str, str]:
 
 def normalize_web_search_provider(value: str | None) -> str:
     mode = (value or "auto").strip().lower()
-    return mode if mode in _WEB_SEARCH_PROVIDERS else "auto"
+    if mode not in _WEB_SEARCH_PROVIDERS:
+        return "exa_mcp"
+    # Backward compatibility: Brave/auto modes are collapsed into Exa MCP.
+    if mode in {"auto", "brave"}:
+        return "exa_mcp"
+    return mode
 
 
 def is_tool_enabled(enabled_tools: set[str], name: str) -> bool:
@@ -53,13 +58,9 @@ def is_mcp_server_enabled(
 
 
 def should_try_exa_mcp_search(provider: str, exa_mcp_configured: bool) -> bool:
-    if provider in {"disabled", "brave"}:
+    if provider == "disabled":
         return False
     return exa_mcp_configured
-
-
-def should_allow_brave_web_search(provider: str) -> bool:
-    return provider in {"auto", "brave"}
 
 
 def truncate_tool_output(

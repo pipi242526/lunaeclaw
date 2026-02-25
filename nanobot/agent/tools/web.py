@@ -2,7 +2,6 @@
 
 import html
 import json
-import os
 import re
 from typing import Any
 from urllib.parse import urlparse
@@ -52,62 +51,6 @@ def _validate_url(url: str) -> tuple[bool, str]:
         return True, ""
     except Exception as e:
         return False, str(e)
-
-
-class WebSearchTool(Tool):
-    """Search the web using Brave Search API."""
-    
-    name = "web_search"
-    description = "Search the web. Returns titles, URLs, and snippets."
-    parameters = {
-        "type": "object",
-        "properties": {
-            "query": {"type": "string", "description": "Search query"},
-            "count": {"type": "integer", "description": "Results (1-10)", "minimum": 1, "maximum": 10}
-        },
-        "required": ["query"]
-    }
-    
-    def __init__(self, api_key: str | None = None, max_results: int = 5):
-        self._config_api_key = api_key
-        self.max_results = max_results
-
-    def _resolve_api_key(self) -> str:
-        """Resolve API key at call time so env/config changes are picked up."""
-        return self._config_api_key or os.environ.get("BRAVE_API_KEY", "")
-    
-    async def execute(self, query: str, count: int | None = None, **kwargs: Any) -> str:
-        api_key = self._resolve_api_key()
-        if not api_key:
-            return (
-                "Error: Brave Search API key not configured. "
-                "Set it in ~/.nanobot/config.json under tools.web.search.apiKey "
-                "(or export BRAVE_API_KEY / use env placeholders), then retry."
-            )
-        
-        try:
-            n = min(max(count or self.max_results, 1), 10)
-            async with httpx.AsyncClient() as client:
-                r = await client.get(
-                    "https://api.search.brave.com/res/v1/web/search",
-                    params={"q": query, "count": n},
-                    headers={"Accept": "application/json", "X-Subscription-Token": api_key},
-                    timeout=10.0
-                )
-                r.raise_for_status()
-            
-            results = r.json().get("web", {}).get("results", [])
-            if not results:
-                return f"No results for: {query}"
-            
-            lines = [f"Results for: {query}\n"]
-            for i, item in enumerate(results[:n], 1):
-                lines.append(f"{i}. {item.get('title', '')}\n   {item.get('url', '')}")
-                if desc := item.get("description"):
-                    lines.append(f"   {desc}")
-            return "\n".join(lines)
-        except Exception as e:
-            return f"Error: {e}"
 
 
 class MCPWebSearchCompatTool(Tool):

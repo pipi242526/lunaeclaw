@@ -21,7 +21,6 @@ from nanobot.agent.tooling import (
     normalize_name_set,
     normalize_tool_aliases,
     normalize_web_search_provider,
-    should_allow_brave_web_search,
     should_try_exa_mcp_search,
     truncate_tool_output,
 )
@@ -34,7 +33,6 @@ from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.web import (
     WebFetchTool,
-    WebSearchTool,
     has_exa_search_mcp,
     install_exa_web_search_alias,
 )
@@ -73,7 +71,6 @@ class AgentLoop:
         temperature: float = 0.7,
         max_tokens: int = 4096,
         memory_window: int = 50,
-        brave_api_key: str | None = None,
         exec_config: ExecToolConfig | None = None,
         cron_service: CronService | None = None,
         restrict_to_workspace: bool = False,
@@ -97,7 +94,6 @@ class AgentLoop:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.memory_window = memory_window
-        self.brave_api_key = brave_api_key
         self.exec_config = exec_config or ExecToolConfig()
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
@@ -129,7 +125,6 @@ class AgentLoop:
             model=self.model,
             temperature=self.temperature,
             max_tokens=self.max_tokens,
-            brave_api_key=brave_api_key,
             exec_config=self.exec_config,
             restrict_to_workspace=restrict_to_workspace,
             mcp_servers=self._mcp_servers,
@@ -168,9 +163,6 @@ class AgentLoop:
 
     def _should_try_exa_mcp_search(self) -> bool:
         return should_try_exa_mcp_search(self.web_search_provider, self._exa_mcp_configured)
-
-    def _should_allow_brave_web_search(self) -> bool:
-        return should_allow_brave_web_search(self.web_search_provider)
 
     def _register_default_tools(self) -> None:
         """Register the default set of tools."""
@@ -217,20 +209,7 @@ class AgentLoop:
         if self._prefer_exa_mcp_web_search:
             logger.info("Exa MCP detected; deferring built-in web_search registration until MCP connects")
             return
-        self._register_brave_web_search_fallback()
-
-    def _register_brave_web_search_fallback(self) -> None:
-        if not self._tool_enabled("web_search"):
-            return
-        if not self._should_allow_brave_web_search():
-            return
-        if self.tools.has("web_search"):
-            return
-        if self.brave_api_key:
-            self.tools.register(WebSearchTool(api_key=self.brave_api_key))
-            logger.info("Registered built-in web_search (Brave Search API)")
-            return
-        logger.warning("web_search is enabled but tools.web.search.api_key is missing; skipping tool registration")
+        logger.warning("web_search enabled but Exa MCP is not configured; web_search unavailable")
 
     def _install_exa_web_search_alias_if_available(self) -> bool:
         if not self._tool_enabled("web_search"):
@@ -271,14 +250,10 @@ class AgentLoop:
             if self._prefer_exa_mcp_web_search:
                 if not self._install_exa_web_search_alias_if_available():
                     logger.warning("Exa MCP is configured but 'web_search_exa' tool was not registered")
-                    if self.web_search_provider == "auto":
-                        self._register_brave_web_search_fallback()
             self._apply_configured_tool_aliases(stage="mcp")
             self._mcp_connected = True
         except Exception as e:
             logger.error("Failed to connect MCP servers (will retry next message): {}", e)
-            if self._prefer_exa_mcp_web_search and self.web_search_provider == "auto":
-                self._register_brave_web_search_fallback()
             if self._mcp_stack:
                 try:
                     await self._mcp_stack.aclose()
@@ -360,10 +335,10 @@ class AgentLoop:
                 "检查 tools.aliases 是否映射到不存在的目标工具",
                 "检查 MCP server/tool 过滤项（mcpEnabled*/mcpDisabled*）是否把工具过滤掉了",
             ])
-        elif "brave_api_key" in lower or "brave" in lower and "api" in lower:
+        elif "brave_api_key" in lower or ("brave" in lower and "api" in lower):
             fixes.extend([
-                "改用 Exa MCP：tools.web.search.provider = exa_mcp（推荐）",
-                "或在 tools.web.search.apiKey 配置 Brave Search API key",
+                "使用 Exa MCP：tools.web.search.provider = exa_mcp",
+                "检查 tools.mcpServers.exa 和 mcpEnabledTools 是否已启用 web_search_exa",
             ])
         elif "mcp" in lower and "timed out" in lower:
             fixes.extend([

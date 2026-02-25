@@ -8,7 +8,7 @@
 
 - `tools.enabled`：内置工具白名单（空列表表示全部启用）
 - `tools.aliases`：工具别名映射（`alias -> target`），支持内置工具和 MCP 工具
-- `tools.web.search.provider`：搜索后端选择（`auto | brave | exa_mcp | disabled`）
+- `tools.web.search.provider`：搜索后端选择（推荐 `exa_mcp`；`disabled` 可关闭，`auto/brave` 仅兼容输入）
 - `profiles.active` + `profiles.items`：场景配置档（`cn_dev / research / offline`）
 - `tools.mcpServers`：配置 MCP 服务器
 - `tools.mcpEnabledServers` / `tools.mcpDisabledServers`：MCP 服务端过滤
@@ -34,7 +34,7 @@
 - `edit_file`：按补丁/编辑方式修改文件
 - `list_dir`：列目录内容
 - `exec`：执行 shell 命令
-- `web_search`：联网搜索（当前可选 Brave / Exa MCP）
+- `web_search`：联网搜索（当前统一走 Exa MCP）
 - `web_fetch`：抓取网页并提取正文（增强版 Readability + HTML fallback + 二进制内容提示）
 - `message`：给用户/渠道发送消息
 - `spawn`：启动子代理执行任务
@@ -200,10 +200,10 @@
 
 ### 5.1 优先替换：搜索与网页抽取
 
-1. `web_search`（已开始）
-- 当前方案：Brave / Exa MCP
+1. `web_search`（已完成统一）
+- 当前方案：Exa MCP
 - 建议主方案：Exa MCP（搜索 + code context）
-- 保留 Brave 作为 `auto` 模式回退
+- 本分支已移除 Brave 搜索回退，`auto/brave` 配置会按兼容逻辑视为 `exa_mcp`
 
 2. `web_fetch`（已做内置增强，可继续补强）
 - 当前 `web_fetch` 已重写增强：内容类型识别、HTML 抽取回退、结构化返回、二进制内容提示
@@ -299,7 +299,7 @@ nanobot doctor
 
 `doctor` 会优先检查：
 
-- 搜索后端是否可用（Exa / Brave）
+- 搜索后端是否可用（Exa MCP）
 - `docloader` 是否缺 `uvx`
 - alias 配置是否无效
 - profile 是否引用了不存在的条目
