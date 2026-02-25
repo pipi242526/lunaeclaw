@@ -1573,6 +1573,19 @@ def doctor():
     console.print("3. Test attachments with `doc_read` / `image_read` after enabling docloader MCP.")
 
 
+@app.command()
+def webui(
+    host: str = typer.Option("127.0.0.1", help="Bind host (default localhost for safety)"),
+    port: int = typer.Option(18791, help="Bind port for the local web UI"),
+    config_path: Path | None = typer.Option(None, "--config", help="Optional config file path"),
+    open_browser: bool = typer.Option(False, help="Open browser automatically after startup"),
+):
+    """Run a lightweight local web UI for config / MCP / skills / channels management."""
+    from nanobot.webui.server import run_webui
+
+    run_webui(host=host, port=port, config_path=config_path, open_browser=open_browser)
+
+
 # ============================================================================
 # OAuth Login
 # ============================================================================

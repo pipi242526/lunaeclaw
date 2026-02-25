@@ -1098,6 +1098,26 @@ If you edit the `.service` file itself, run `systemctl --user daemon-reload` bef
 > loginctl enable-linger $USER
 > ```
 
+## 🖥️ Local Web UI (Config Manager)
+
+nanobot now includes a lightweight local Web UI for config management (models/endpoints, channels, MCP/skills).
+
+```bash
+nanobot webui
+```
+
+Default address:
+
+```text
+http://127.0.0.1:18791/
+```
+
+Notes:
+
+- Local-only by default (`127.0.0.1`) for safety
+- Designed as a config/diagnostic panel (not a chat frontend)
+- For deeper diagnostics, keep using `nanobot status` / `nanobot doctor`
+
 ## 📁 Project Structure
 
 ```
