@@ -56,7 +56,11 @@ class ClaudeCodeTool(Tool):
                 },
                 "session": {
                     "type": "string",
-                    "description": "Session name (without prefix is okay; tool will normalize it)",
+                    "description": (
+                        "Session name (without prefix is okay; tool will normalize it). "
+                        "Optional for start (auto-generated). For send/tail/status/stop, "
+                        "if omitted and exactly one Claude Code session exists, it will be used."
+                    ),
                 },
                 "prompt": {
                     "type": "string",
@@ -111,12 +115,16 @@ class ClaudeCodeTool(Tool):
         if action == "list":
             return self._dump(await self._list_sessions(tmux_path))
 
+        if action == "start":
+            target = self._normalize_session_name(session)
+            if not target:
+                target = await self._generate_session_name(tmux_path)
+            return self._dump(await self._start_session(tmux_path, target, prompt=prompt, working_dir=working_dir, submit=submit))
         target = self._normalize_session_name(session)
         if not target:
-            return self._dump({"error": "session_required", "hint": "Provide `session` for this action."})
-
-        if action == "start":
-            return self._dump(await self._start_session(tmux_path, target, prompt=prompt, working_dir=working_dir, submit=submit))
+            target, err = await self._resolve_implicit_session(tmux_path)
+            if err:
+                return self._dump(err)
         if action == "send":
             return self._dump(await self._send_to_session(tmux_path, target, prompt=prompt, submit=submit))
         if action == "tail":
@@ -144,6 +152,40 @@ class ClaudeCodeTool(Tool):
             name = f"{prefix}{name}"
         # tmux names can be long but keep them readable/safe
         return name[:64]
+
+    async def _generate_session_name(self, tmux_path: str) -> str:
+        base = self._normalize_session_name(f"auto_{time.strftime('%Y%m%d_%H%M%S')}")
+        if not base:
+            base = (self.config.session_prefix or "cc_") + "auto"
+        candidate = base
+        for idx in range(1, 100):
+            if not await self._session_exists(tmux_path, candidate):
+                return candidate
+            suffix = f"_{idx}"
+            candidate = f"{base[: max(1, 64 - len(suffix))]}{suffix}"
+        return f"{(self.config.session_prefix or 'cc_')}auto_{int(time.time())}"[:64]
+
+    async def _resolve_implicit_session(self, tmux_path: str) -> tuple[str | None, dict[str, Any] | None]:
+        listed = await self._list_sessions(tmux_path)
+        if "error" in listed:
+            return None, {
+                "error": "session_required",
+                "hint": "Provide `session`, or run `list` to inspect available Claude Code sessions.",
+                "detail": listed.get("detail"),
+            }
+        sessions = [s.get("name") for s in listed.get("sessions", []) if isinstance(s.get("name"), str)]
+        if len(sessions) == 1:
+            return sessions[0], None
+        if not sessions:
+            return None, {
+                "error": "session_required",
+                "hint": "No Claude Code sessions found. Start one first with action=start.",
+            }
+        return None, {
+            "error": "session_ambiguous",
+            "hint": "Multiple Claude Code sessions exist. Provide `session` explicitly or call action=list.",
+            "sessions": sessions[:20],
+        }
 
     def _resolve_working_dir(self, working_dir: str | None) -> tuple[Path | None, str | None]:
         base = (working_dir or self.config.default_working_dir or str(self.workspace)).strip()
@@ -239,6 +281,7 @@ class ClaudeCodeTool(Tool):
                     "windows": int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else None,
                 }
             )
+        sessions.sort(key=lambda s: s.get("name") or "")
         return {"action": "list", "sessions": sessions}
 
     async def _start_session(
