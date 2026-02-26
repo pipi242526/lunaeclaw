@@ -1620,18 +1620,18 @@ def webui(
     port: int = typer.Option(18791, help="Bind port for the local web UI"),
     config_path: Path | None = typer.Option(None, "--config", help="Optional config file path"),
     open_browser: bool = typer.Option(False, help="Open browser automatically after startup"),
-    token: str | None = typer.Option(
+    path_token: str | None = typer.Option(
         None,
-        "--token",
-        help="Optional Web UI auth token (HTTP Basic password). Can also use NANOBOT_WEBUI_TOKEN.",
-        envvar="NANOBOT_WEBUI_TOKEN",
+        "--path-token",
+        help="Optional Web UI path token (URL secret suffix, no login popup). Can also use NANOBOT_WEBUI_PATH_TOKEN.",
+        envvar="NANOBOT_WEBUI_PATH_TOKEN",
     ),
 ):
     """Run a lightweight local web UI for config / MCP / skills / channels management."""
     from nanobot.webui.server import run_webui
 
     _bootstrap_runtime_for_webui(config_path)
-    run_webui(host=host, port=port, config_path=config_path, open_browser=open_browser, auth_token=token)
+    run_webui(host=host, port=port, config_path=config_path, open_browser=open_browser, path_token=path_token)
 
 
 # ============================================================================

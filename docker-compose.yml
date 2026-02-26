@@ -36,7 +36,7 @@ services:
     restart: unless-stopped
     environment:
       # Optional: set in shell before `docker compose up` to enable Web UI auth.
-      NANOBOT_WEBUI_TOKEN: ${NANOBOT_WEBUI_TOKEN:-}
+      NANOBOT_WEBUI_PATH_TOKEN: ${NANOBOT_WEBUI_PATH_TOKEN:-}
       # Use Debian system CA bundle for Python requests/urllib3 inside the container.
       SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
       REQUESTS_CA_BUNDLE: /etc/ssl/certs/ca-certificates.crt

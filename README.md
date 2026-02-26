@@ -1117,14 +1117,14 @@ Notes:
 - Local-only by default (`127.0.0.1`) for safety
 - Designed as a config/diagnostic panel (not a chat frontend)
 - For deeper diagnostics, keep using `nanobot status` / `nanobot doctor`
-- Optional auth token (HTTP Basic password): `nanobot webui --token your_token`
+- Optional path token (URL secret suffix, no login popup): `nanobot webui --path-token your_random_path_token`
 
 ### Docker Compose (Web UI)
 
 Run Web UI in Docker (binds `0.0.0.0:18791` inside the container and maps to host):
 
 ```bash
-export NANOBOT_WEBUI_TOKEN=your_token   # optional but recommended
+export NANOBOT_WEBUI_PATH_TOKEN=your_random_path_token   # optional; otherwise generated and saved on first start
 docker compose --profile webui up -d --build nanobot-webui
 ```
 

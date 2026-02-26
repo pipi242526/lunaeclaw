@@ -364,7 +364,7 @@ http://127.0.0.1:18791/
 可选认证（建议在非本机监听时开启）：
 
 ```bash
-nanobot webui --token your_token
+nanobot webui --path-token your_random_path_token
 ```
 
 当前第一版页面（偏配置管理，不是聊天前端）：

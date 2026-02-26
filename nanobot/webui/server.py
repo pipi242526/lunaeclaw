@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import base64
-import hmac
 import json
 import os
+import re
 import secrets
 import threading
 import webbrowser
@@ -147,37 +146,45 @@ def run_webui(
     *,
     config_path: Path | None = None,
     open_browser: bool = False,
-    auth_token: str | None = None,
+    path_token: str | None = None,
 ) -> None:
     """Start the local nanobot web UI."""
     cfg_path = (config_path or get_config_path()).expanduser()
-    auth_token = (auth_token or "").strip()
-    token_path = cfg_path.parent / "webui.token"
+    path_token = (path_token or "").strip()
+    token_path = cfg_path.parent / "webui.path-token"
 
-    def _resolve_auth_token() -> str:
-        nonlocal auth_token
-        if auth_token:
-            return auth_token
+    def _normalize_path_token(raw: str) -> str:
+        cleaned = re.sub(r"[^A-Za-z0-9_-]", "", (raw or "").strip().strip("/"))
+        if len(cleaned) < 12:
+            raise ValueError("Web UI path token must be at least 12 URL-safe chars")
+        return cleaned
+
+    def _resolve_path_token() -> str:
+        nonlocal path_token
+        if path_token:
+            path_token = _normalize_path_token(path_token)
+            return path_token
         if token_path.exists():
             try:
-                auth_token = token_path.read_text(encoding="utf-8").strip()
+                path_token = _normalize_path_token(token_path.read_text(encoding="utf-8").strip())
             except Exception:
-                auth_token = ""
-            if auth_token:
-                print(f"🔐 Web UI auth token loaded from {token_path}", flush=True)
-                return auth_token
-        auth_token = secrets.token_urlsafe(18)
+                path_token = ""
+            if path_token:
+                print(f"🔐 Web UI path token loaded from {token_path}", flush=True)
+                return path_token
+        path_token = secrets.token_urlsafe(15)  # ~20 chars, URL-safe
         token_path.parent.mkdir(parents=True, exist_ok=True)
-        token_path.write_text(auth_token + "\n", encoding="utf-8")
+        token_path.write_text(path_token + "\n", encoding="utf-8")
         try:
             os.chmod(token_path, 0o600)
         except Exception:
             pass
-        print(f"🔐 Web UI auth token generated (first start): {auth_token}", flush=True)
+        print(f"🔐 Web UI path token generated (first start): {path_token}", flush=True)
         print(f"🔐 Saved token to: {token_path}", flush=True)
-        return auth_token
+        return path_token
 
-    _resolve_auth_token()
+    path_token = _resolve_path_token()
+    path_prefix = f"/{path_token}"
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "nanobot-webui/0.1"
@@ -188,13 +195,14 @@ def run_webui(
         def do_HEAD(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             path = parsed.path or "/"
-            if path == "/healthz":
+            if path in {"/healthz", f"{path_prefix}/healthz"}:
                 self._send_text(200, "ok", head_only=True)
                 return
-            if not self._auth_ok():
-                self._require_auth(head_only=True)
+            route_path = self._route_path(path)
+            if route_path is None:
+                self._send_text(404, "Not Found", head_only=True)
                 return
-            if path in {"/", "/endpoints", "/channels", "/extensions"}:
+            if route_path in {"/", "/endpoints", "/channels", "/extensions"}:
                 self._send_text(200, "", head_only=True)
                 return
             self._send_text(404, "Not Found", head_only=True)
@@ -202,23 +210,24 @@ def run_webui(
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             path = parsed.path or "/"
-            if path == "/healthz":
+            if path in {"/healthz", f"{path_prefix}/healthz"}:
                 self._send_text(200, "ok")
                 return
-            if not self._auth_ok():
-                self._require_auth()
+            route_path = self._route_path(path)
+            if route_path is None:
+                self._send_html(404, self._page("Not Found", "<p>Not Found</p>", tab=""))
                 return
             params = parse_qs(parsed.query)
             msg = (params.get("msg") or [""])[0]
             err = (params.get("err") or [""])[0]
             try:
-                if path == "/":
+                if route_path == "/":
                     self._render_dashboard(msg=msg, err=err)
-                elif path == "/endpoints":
+                elif route_path == "/endpoints":
                     self._render_endpoints(msg=msg, err=err)
-                elif path == "/channels":
+                elif route_path == "/channels":
                     self._render_channels(msg=msg, err=err)
-                elif path == "/extensions":
+                elif route_path == "/extensions":
                     self._render_extensions(msg=msg, err=err)
                 else:
                     self._send_html(404, self._page("Not Found", "<p>Not Found</p>", tab=""))
@@ -226,24 +235,25 @@ def run_webui(
                 self._send_html(500, self._page("Error", f"<pre>{escape(str(e))}</pre>", tab=""))
 
         def do_POST(self) -> None:  # noqa: N802
-            if not self._auth_ok():
-                self._require_auth()
-                return
             parsed = urlparse(self.path)
+            route_path = self._route_path(parsed.path or "/")
+            if route_path is None:
+                self._send_text(404, "Not Found")
+                return
             form = self._read_form()
             try:
-                if parsed.path == "/endpoints":
+                if route_path == "/endpoints":
                     self._handle_post_endpoints(form)
                     return
-                if parsed.path == "/channels":
+                if route_path == "/channels":
                     self._handle_post_channels(form)
                     return
-                if parsed.path == "/extensions":
+                if route_path == "/extensions":
                     self._handle_post_extensions(form)
                     return
                 self._redirect("/", err="Unsupported action")
             except Exception as e:
-                target = parsed.path if parsed.path in {"/endpoints", "/channels", "/extensions"} else "/"
+                target = route_path if route_path in {"/endpoints", "/channels", "/extensions"} else "/"
                 self._redirect(target, err=str(e))
 
         def _load_config(self) -> Config:
@@ -264,6 +274,7 @@ def run_webui(
             return key in form and (self._form_str(form, key).lower() not in {"0", "false", "off"})
 
         def _send_html(self, status: int, html: str) -> None:
+            html = self._rewrite_prefixed_paths(html)
             data = html.encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -287,29 +298,24 @@ def run_webui(
             if not head_only:
                 self.wfile.write(data)
 
-        def _auth_ok(self) -> bool:
-            if not auth_token:
-                return True
-            header = self.headers.get("Authorization") or ""
-            if not header.startswith("Basic "):
-                return False
-            encoded = header[6:].strip()
-            try:
-                decoded = base64.b64decode(encoded).decode("utf-8", errors="strict")
-            except Exception:
-                return False
-            _, _, password = decoded.partition(":")
-            return hmac.compare_digest(password, auth_token)
+        def _route_path(self, raw_path: str) -> str | None:
+            if not path_prefix:
+                return raw_path or "/"
+            if raw_path == path_prefix:
+                return "/"
+            if raw_path.startswith(path_prefix + "/"):
+                suffix = raw_path[len(path_prefix):]
+                return suffix or "/"
+            return None
 
-        def _require_auth(self, *, head_only: bool = False) -> None:
-            body = b"Authentication required"
-            self.send_response(401)
-            self.send_header("WWW-Authenticate", 'Basic realm="nanobot Web UI"')
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            if not head_only:
-                self.wfile.write(body)
+        def _rewrite_prefixed_paths(self, html_doc: str) -> str:
+            if not path_prefix:
+                return html_doc
+            return re.sub(
+                r'(?P<attr>href|action|formaction)="/(?P<path>(?!/)[^"]*)"',
+                lambda m: f'{m.group("attr")}="{path_prefix}/{m.group("path")}"',
+                html_doc,
+            )
 
         def _redirect(self, path: str, *, msg: str = "", err: str = "") -> None:
             params: dict[str, str] = {}
@@ -317,9 +323,9 @@ def run_webui(
                 params["msg"] = msg
             if err:
                 params["err"] = err
-            url = path
+            url = f"{path_prefix}{path}" if path_prefix and path.startswith("/") else path
             if params:
-                url = f"{path}?{urlencode(params)}"
+                url = f"{url}?{urlencode(params)}"
             self.send_response(303)
             self.send_header("Location", url)
             self.end_headers()
@@ -343,6 +349,9 @@ def run_webui(
                 flash += f'<div class="flash ok">{escape(msg)}</div>'
             if err:
                 flash += f'<div class="flash err">{escape(err)}</div>'
+            access_path_display = f"{path_prefix}/"
+            external_host = "127.0.0.1" if host == "0.0.0.0" else host
+            full_access_url = f"http://{external_host}:{port}{access_path_display}"
             return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -373,14 +382,26 @@ def run_webui(
         var(--bg);
     }}
     .layout {{ max-width: 1200px; margin: 0 auto; padding: 18px; }}
-    .top {{ display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:16px; }}
+    .top {{
+      display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:16px;
+      background: linear-gradient(180deg, rgba(255,255,255,.7), rgba(255,255,255,.35));
+      border:1px solid rgba(255,255,255,.9); box-shadow: var(--shadow); border-radius: 16px; padding: 14px;
+      backdrop-filter: blur(6px);
+    }}
     .brand h1 {{ margin:0; font-size: 22px; letter-spacing:.2px; }}
     .brand p {{ margin:6px 0 0; color: var(--muted); font-size: 13px; }}
+    .access-chip {{
+      margin-top: 10px; display:inline-flex; align-items:center; gap:8px; border:1px dashed #cdbfa8;
+      background: rgba(255,255,255,.65); color: #523e1a; border-radius: 999px; padding: 6px 10px;
+      font-size: 12px; font-family: var(--mono);
+    }}
     .nav {{ display:flex; gap:8px; flex-wrap:wrap; }}
     .nav-item {{
       text-decoration:none; color: var(--ink); border:1px solid var(--line);
       background: rgba(255,255,255,.55); padding:8px 12px; border-radius: 999px; font-size: 13px;
+      transition: transform .12s ease, box-shadow .12s ease, background .12s ease;
     }}
+    .nav-item:hover {{ transform: translateY(-1px); box-shadow: 0 4px 14px rgba(31,35,40,.08); }}
     .nav-item.active {{ background: var(--accent); color: #fff; border-color: var(--accent); }}
     .flash {{ border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; font-size: 13px; }}
     .flash.ok {{ background: #ecfdf3; color: var(--ok); border:1px solid #abefc6; }}
@@ -415,6 +436,7 @@ def run_webui(
     table {{ width:100%; border-collapse: collapse; font-size: 13px; }}
     th, td {{ border-bottom:1px solid #ece7dc; text-align:left; vertical-align: top; padding:8px 6px; }}
     th {{ color: var(--muted); font-weight:600; }}
+    tbody tr:hover td {{ background: rgba(15,108,92,.03); }}
     code {{ font-family: var(--mono); background:#f4f1ea; padding:2px 4px; border-radius:4px; }}
     .pill {{ display:inline-block; border-radius:999px; padding:2px 8px; font-size:11px; border:1px solid var(--line); }}
     .pill.ok {{ border-color:#abefc6; color: var(--ok); background:#f0fdf4; }}
@@ -427,6 +449,12 @@ def run_webui(
     .endpoint-head {{ display:flex; justify-content:space-between; gap:8px; align-items:center; }}
     .endpoint-fields {{ display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:10px; margin-top:10px; }}
     .endpoint-fields .field.full {{ grid-column: 1 / -1; }}
+    .toast {{
+      position: fixed; right: 16px; bottom: 16px; background: #122b24; color: #fff; border-radius: 10px;
+      padding: 10px 12px; font-size: 12px; opacity: 0; transform: translateY(8px); pointer-events:none;
+      transition: all .18s ease;
+    }}
+    .toast.show {{ opacity: .96; transform: translateY(0); }}
     @media (max-width: 900px) {{
       .grid.cols-2, .grid.cols-3, .split, .endpoint-fields {{ grid-template-columns: 1fr; }}
       .top {{ flex-direction: column; }}
@@ -438,7 +466,12 @@ def run_webui(
     <div class="top">
       <div class="brand">
         <h1>nanobot Web UI</h1>
-        <p>本地配置管理台（默认只监听 {escape(host)}:{port}）{" · 已启用认证" if auth_token else ""}</p>
+        <p>轻量配置管理台（Host: {escape(host)}:{port}） · 使用路径密钥访问（无账号密码弹窗）</p>
+        <div class="access-chip">
+          <span>入口</span>
+          <code>{escape(access_path_display)}</code>
+          <button type="button" class="btn" data-copy="{escape(full_access_url)}" onclick="nbCopy(this.dataset.copy)">复制完整地址</button>
+        </div>
       </div>
       <nav class="nav">{self._nav(tab)}</nav>
     </div>
@@ -457,8 +490,16 @@ def run_webui(
         document.execCommand('copy');
         ta.remove();
       }}
+      const toast = document.getElementById('nb-toast');
+      if (toast) {{
+        toast.textContent = '已复制';
+        toast.classList.add('show');
+        window.clearTimeout(window.__nbToastTimer);
+        window.__nbToastTimer = window.setTimeout(() => toast.classList.remove('show'), 1200);
+      }}
     }}
   </script>
+  <div id="nb-toast" class="toast" aria-live="polite"></div>
 </body>
 </html>"""
 
@@ -833,16 +874,17 @@ def run_webui(
             raise ValueError("Unsupported extensions action")
 
     httpd = ThreadingHTTPServer((host, port), Handler)
-    url = f"http://{host}:{port}/"
-    print(f"nanobot Web UI listening on {url}")
-    if auth_token:
-        print("Web UI auth: enabled (HTTP Basic, password is your provided token)")
-    else:
-        print("Web UI auth: disabled (set --token or NANOBOT_WEBUI_TOKEN to enable)")
+    public_host = "127.0.0.1" if host == "0.0.0.0" else host
+    root_url = f"http://{public_host}:{port}/"
+    access_url = f"http://{public_host}:{port}{path_prefix}/"
+    print(f"nanobot Web UI listening on {root_url}")
+    print(f"Web UI access path (required): {path_prefix}/")
+    print(f"Open Web UI at: {access_url}")
+    print(f"Path token file: {token_path}")
     if host not in {"127.0.0.1", "localhost"}:
-        print("Warning: Web UI is not bound to localhost. Expose only behind trusted network/auth.")
+        print("Warning: Web UI is not bound to localhost. Keep the path token secret and prefer a trusted network/reverse proxy.")
     if open_browser:
-        threading.Timer(0.4, lambda: webbrowser.open(url)).start()
+        threading.Timer(0.4, lambda: webbrowser.open(access_url)).start()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
