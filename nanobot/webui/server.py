@@ -23,7 +23,13 @@ from nanobot.config.schema import (
     SkillsConfig,
     ToolsConfig,
 )
-from nanobot.utils.helpers import get_env_dir, get_env_file, get_global_skills_path, get_media_dir
+from nanobot.utils.helpers import (
+    get_env_dir,
+    get_env_file,
+    get_exports_dir,
+    get_global_skills_path,
+    get_media_dir,
+)
 
 
 _ENDPOINT_TYPES = [
@@ -88,6 +94,7 @@ def _apply_recommended_tool_defaults(config: Config) -> None:
     tools.aliases.setdefault("code_search", "mcp_exa_get_code_context_exa")
     tools.aliases.setdefault("doc_read", "mcp_docloader_read_document")
     tools.aliases.setdefault("image_read", "mcp_docloader_read_image")
+    tools.aliases.setdefault("media_files", "files_hub")
 
 
 def _parse_csv(value: str) -> list[str]:
@@ -159,12 +166,11 @@ def _media_display_name(name: str) -> str:
     return name
 
 
-def _list_media_rows() -> list[dict[str, Any]]:
-    media_dir = get_media_dir()
+def _list_store_rows(root: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    if not media_dir.exists():
+    if not root.exists():
         return rows
-    for p in sorted(media_dir.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+    for p in sorted(root.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
         if not p.is_file():
             continue
         st = p.stat()
@@ -178,6 +184,14 @@ def _list_media_rows() -> list[dict[str, Any]]:
             }
         )
     return rows
+
+
+def _list_media_rows() -> list[dict[str, Any]]:
+    return _list_store_rows(get_media_dir())
+
+
+def _list_exports_rows() -> list[dict[str, Any]]:
+    return _list_store_rows(get_exports_dir())
 
 
 def run_webui(
@@ -847,15 +861,22 @@ def run_webui(
             self._send_html(200, self._page("MCP & Skills", body, tab="/extensions", msg=msg, err=err))
 
         def _render_media(self, *, msg: str = "", err: str = "") -> None:
-            rows = _list_media_rows()
-            media_dir = get_media_dir()
-            table_rows = []
-            for r in rows[:300]:
-                size_kb = f"{r['size']/1024:.1f} KB"
-                from datetime import datetime
-                mtime = datetime.fromtimestamp(r["mtime"]).strftime("%Y-%m-%d %H:%M:%S")
-                table_rows.append(
-                    f"""
+            def _render_store_block(
+                *,
+                scope: str,
+                title: str,
+                desc: str,
+                rows: list[dict[str, Any]],
+                root_dir: Path,
+            ) -> str:
+                table_rows = []
+                for r in rows[:300]:
+                    size_kb = f"{r['size']/1024:.1f} KB"
+                    from datetime import datetime
+
+                    mtime = datetime.fromtimestamp(r["mtime"]).strftime("%Y-%m-%d %H:%M:%S")
+                    table_rows.append(
+                        f"""
 <tr>
   <td><input type="checkbox" name="selected_name" value="{escape(r['name'])}"></td>
   <td><code>{escape(r['display_name'])}</code><div class="muted mono">{escape(r['name'])}</div></td>
@@ -867,37 +888,69 @@ def run_webui(
   </td>
 </tr>
 """
-                )
+                    )
+                return f"""
+<section class="card" style="margin-top:14px">
+  <h2>{escape(title)}</h2>
+  <table>
+    <tr><th>目录</th><td><code>{escape(str(root_dir))}</code></td></tr>
+    <tr><th>文件数</th><td>{len(rows)}</td></tr>
+  </table>
+  <div class="muted" style="margin-top:8px">{escape(desc)}</div>
+  <form method="post" style="margin-top:14px">
+    <input type="hidden" name="scope" value="{escape(scope)}">
+    <div class="row" style="margin-bottom:10px">
+      <button class="btn warn" type="submit" name="action" value="delete_selected" onclick="return confirm('删除选中的文件?');">删除选中项</button>
+      <button class="btn subtle" type="submit" name="action" value="refresh">刷新</button>
+    </div>
+    <table>
+      <tr><th></th><th>显示名 / 文件名</th><th>大小</th><th>修改时间</th><th>路径</th><th></th></tr>
+      {''.join(table_rows) or '<tr><td colspan="6" class="muted">目录为空</td></tr>'}
+    </table>
+  </form>
+</section>
+"""
+
+            media_rows = _list_media_rows()
+            export_rows = _list_exports_rows()
+            media_dir = get_media_dir()
+            exports_dir = get_exports_dir()
             body = f"""
 <div class="grid cols-2">
   <section class="card">
-    <h2>媒体目录</h2>
+    <h2>文件处理总览</h2>
     <table>
-      <tr><th>目录</th><td><code>{escape(str(media_dir))}</code></td></tr>
-      <tr><th>文件数</th><td>{len(rows)}</td></tr>
+      <tr><th>上传附件（media）</th><td>{len(media_rows)} 个</td></tr>
+      <tr><th>生成输出（exports）</th><td>{len(export_rows)} 个</td></tr>
+      <tr><th>路由建议</th><td><code>files_hub(scope=...)</code> 统一管理</td></tr>
     </table>
-    <div class="muted" style="margin-top:8px">这里是聊天渠道（TG/Discord/Feishu 等）下载的附件目录。建议先查看再删除。</div>
+    <div class="muted" style="margin-top:8px">遵循“输入(media) / 处理(workspace) / 输出(exports)”分层，减少误删原件和工具重复。</div>
   </section>
   <section class="card">
-    <h2>聊天内清理命令（推荐）</h2>
+    <h2>聊天内文件管理命令（推荐）</h2>
     <ul class="list small">
-      <li>先列出：<code>media_files(action=&quot;list&quot;)</code></li>
-      <li>再删除：<code>media_files(action=&quot;delete&quot;, names=[...])</code></li>
-      <li>如果 TG 文件名看起来像随机串，请查看 <code>displayName</code>（已尽量保留原文件名）</li>
+      <li>推荐：<code>files_hub(action=&quot;list&quot;, scope=&quot;media&quot;)</code></li>
+      <li>删除：<code>files_hub(action=&quot;delete&quot;, scope=&quot;media&quot;, names=[...])</code></li>
+      <li>导出目录：<code>files_hub(action=&quot;list&quot;, scope=&quot;exports&quot;)</code></li>
+      <li>兼容旧用法：<code>media_files(...)</code> 仍可用（会映射到统一文件工具）</li>
+      <li>如果 TG 文件名看起来像随机串，请查看 <code>displayName</code>（新上传文件会尽量保留原文件名/后缀）</li>
     </ul>
   </section>
 </div>
-<form method="post" class="card" style="margin-top:14px">
-  <h2>媒体文件列表 / 删除</h2>
-  <div class="row" style="margin-bottom:10px">
-    <button class="btn warn" type="submit" name="action" value="delete_selected" onclick="return confirm('删除选中的文件?');">删除选中项</button>
-    <button class="btn subtle" type="submit" name="action" value="refresh">刷新</button>
-  </div>
-  <table>
-    <tr><th></th><th>显示名 / 文件名</th><th>大小</th><th>修改时间</th><th>路径</th><th></th></tr>
-    {''.join(table_rows) or '<tr><td colspan="6" class="muted">媒体目录为空</td></tr>'}
-  </table>
-</form>
+{_render_store_block(
+    scope="media",
+    title="媒体目录（上传附件）",
+    desc="这里是聊天渠道（TG/Discord/Feishu 等）下载的附件目录。建议先查看再删除。",
+    rows=media_rows,
+    root_dir=media_dir,
+)}
+{_render_store_block(
+    scope="exports",
+    title="导出目录（生成文件）",
+    desc="这里建议存放机器人生成的结果文件（如 txt/docx/pdf/xlsx 等），便于统一下载和清理。",
+    rows=export_rows,
+    root_dir=exports_dir,
+)}
 """
             self._send_html(200, self._page("Media", body, tab="/media", msg=msg, err=err))
 
@@ -1009,9 +1062,16 @@ def run_webui(
 
         def _handle_post_media(self, form: dict[str, list[str]]) -> None:
             action = self._form_str(form, "action")
-            media_dir = get_media_dir().resolve()
+            scope = (self._form_str(form, "scope", "media") or "media").strip().lower()
+            if scope == "exports":
+                root_dir = get_exports_dir().resolve()
+                scope_label = "导出目录"
+            else:
+                scope = "media"
+                root_dir = get_media_dir().resolve()
+                scope_label = "媒体目录"
             if action == "refresh":
-                self._redirect("/media", msg="已刷新媒体列表")
+                self._redirect("/media", msg=f"已刷新{scope_label}列表")
                 return
 
             names: list[str] = []
@@ -1030,9 +1090,9 @@ def run_webui(
             for name in names:
                 if "/" in name or "\\" in name or name in {".", ".."}:
                     continue
-                p = (media_dir / name).resolve()
+                p = (root_dir / name).resolve()
                 try:
-                    p.relative_to(media_dir)
+                    p.relative_to(root_dir)
                 except ValueError:
                     continue
                 if not p.exists():
@@ -1042,7 +1102,10 @@ def run_webui(
                     continue
                 p.unlink(missing_ok=True)
                 deleted += 1
-            self._redirect("/media", msg=f"已删除 {deleted} 个文件" + (f"，缺失 {missing} 个" if missing else ""))
+            self._redirect(
+                "/media",
+                msg=f"{scope_label}已删除 {deleted} 个文件" + (f"，缺失 {missing} 个" if missing else ""),
+            )
 
     httpd = ThreadingHTTPServer((host, port), Handler)
     public_host = "127.0.0.1" if host == "0.0.0.0" else host

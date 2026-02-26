@@ -24,7 +24,7 @@ from nanobot.agent.tooling import (
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.alias import install_tool_aliases
 from nanobot.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool
-from nanobot.agent.tools.media import MediaFilesTool
+from nanobot.agent.tools.media import FilesHubTool, MediaFilesTool
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.web import (
     WeatherTool,
@@ -32,7 +32,7 @@ from nanobot.agent.tools.web import (
     has_exa_search_mcp,
     install_exa_web_search_alias,
 )
-from nanobot.utils.helpers import get_media_dir
+from nanobot.utils.helpers import get_exports_dir, get_media_dir
 
 
 class SubagentManager:
@@ -162,13 +162,13 @@ class SubagentManager:
                 # Build subagent tools (no message tool, no spawn tool)
                 tools = ToolRegistry()
                 allowed_dir = self.workspace if self.restrict_to_workspace else None
-                media_read_dirs = [get_media_dir()] if self.restrict_to_workspace else None
+                extra_read_dirs = [get_media_dir(), get_exports_dir()] if self.restrict_to_workspace else None
                 if self._tool_enabled("read_file"):
                     tools.register(
                         ReadFileTool(
                             workspace=self.workspace,
                             allowed_dir=allowed_dir,
-                            extra_allowed_dirs=media_read_dirs,
+                            extra_allowed_dirs=extra_read_dirs,
                         )
                     )
                 if self._tool_enabled("write_file"):
@@ -180,7 +180,7 @@ class SubagentManager:
                         ListDirTool(
                             workspace=self.workspace,
                             allowed_dir=allowed_dir,
-                            extra_allowed_dirs=media_read_dirs,
+                            extra_allowed_dirs=extra_read_dirs,
                         )
                     )
                 if self._tool_enabled("exec"):
@@ -193,6 +193,8 @@ class SubagentManager:
                     self._register_subagent_web_search_initial(tools)
                 if self._tool_enabled("web_fetch"):
                     tools.register(WebFetchTool())
+                if self._tool_enabled("files_hub") or self._tool_enabled("media_files"):
+                    tools.register(FilesHubTool())
                 if self._tool_enabled("media_files"):
                     tools.register(MediaFilesTool())
                 if self._tool_enabled("weather"):

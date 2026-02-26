@@ -55,6 +55,11 @@ def get_media_dir() -> Path:
     return ensure_dir(get_data_path() / "media")
 
 
+def get_exports_dir() -> Path:
+    """Get the generated output files directory (~/.nanobot/exports)."""
+    return ensure_dir(get_data_path() / "exports")
+
+
 def get_history_dir() -> Path:
     """Get CLI history directory (~/.nanobot/history)."""
     return ensure_dir(get_data_path() / "history")
