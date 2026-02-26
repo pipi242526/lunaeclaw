@@ -79,8 +79,6 @@ def _apply_recommended_tool_defaults(config: Config) -> None:
     tools.aliases.setdefault("code_search", "mcp_exa_get_code_context_exa")
     tools.aliases.setdefault("doc_read", "mcp_docloader_read_document")
     tools.aliases.setdefault("image_read", "mcp_docloader_read_image")
-    tools.aliases.setdefault("media_files", "files_hub")
-
     # Seed lightweight usage profiles; users can switch by setting profiles.active.
     profiles = config.profiles
     if "cn_dev" not in profiles.items:

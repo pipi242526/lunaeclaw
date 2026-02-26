@@ -28,7 +28,7 @@ from nanobot.agent.tools.cron import CronTool
 from nanobot.agent.tools.claude_code import ClaudeCodeTool
 from nanobot.agent.tools.alias import install_tool_aliases
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
-from nanobot.agent.tools.media import FilesHubTool, MediaFilesTool
+from nanobot.agent.tools.media import FilesHubTool
 from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.shell import ExecTool
@@ -212,11 +212,8 @@ class AgentLoop:
 
         if self._tool_enabled("web_fetch"):
             self.tools.register(WebFetchTool())
-        if self._tool_enabled("files_hub") or self._tool_enabled("media_files"):
+        if self._tool_enabled("files_hub"):
             self.tools.register(FilesHubTool())
-        # Backward compatibility for older prompts/workflows; can be removed later.
-        if self._tool_enabled("media_files"):
-            self.tools.register(MediaFilesTool())
         if self._tool_enabled("weather"):
             self.tools.register(WeatherTool())
         if self._tool_enabled("claude_code") and self.claude_code_config and self.claude_code_config.enabled:

@@ -155,37 +155,3 @@ class FilesHubTool(_BaseFilesTool):
 
         return self._dump({"error": "unsupported_action", "supported": ["list", "delete"]})
 
-
-class MediaFilesTool(_BaseFilesTool):
-    """Compatibility wrapper for old prompts (deprecated: use files_hub)."""
-
-    name = "media_files"
-    description = "Compatibility alias. Use files_hub with scope=media."
-    parameters = {
-        "type": "object",
-        "properties": {
-            "action": {"type": "string", "enum": ["list", "delete"]},
-            "names": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "File names to delete (exact names from list). Only used when action=delete.",
-            },
-            "limit": {"type": "integer", "minimum": 1, "maximum": 200, "description": "Max items to list."},
-        },
-        "required": ["action"],
-    }
-
-    def __init__(self, media_dir: Path | None = None):
-        self._SCOPES = {"media": (media_dir or get_media_dir()).expanduser()}
-
-    async def execute(
-        self,
-        action: str,
-        names: list[str] | None = None,
-        limit: int = 50,
-        **kwargs: Any,
-    ) -> str:
-        # Delegate to the same implementation shape for backward compatibility.
-        files_hub = FilesHubTool(media_dir=self._SCOPES["media"], exports_dir=get_exports_dir())
-        return await files_hub.execute(action=action, scope="media", names=names, limit=limit)
-

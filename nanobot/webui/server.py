@@ -94,8 +94,6 @@ def _apply_recommended_tool_defaults(config: Config) -> None:
     tools.aliases.setdefault("code_search", "mcp_exa_get_code_context_exa")
     tools.aliases.setdefault("doc_read", "mcp_docloader_read_document")
     tools.aliases.setdefault("image_read", "mcp_docloader_read_image")
-    tools.aliases.setdefault("media_files", "files_hub")
-
 
 def _parse_csv(value: str) -> list[str]:
     return [item.strip() for item in (value or "").replace("\n", ",").split(",") if item.strip()]
@@ -932,7 +930,6 @@ def run_webui(
       <li>推荐：<code>files_hub(action=&quot;list&quot;, scope=&quot;media&quot;)</code></li>
       <li>删除：<code>files_hub(action=&quot;delete&quot;, scope=&quot;media&quot;, names=[...])</code></li>
       <li>导出目录：<code>files_hub(action=&quot;list&quot;, scope=&quot;exports&quot;)</code></li>
-      <li>兼容旧用法：<code>media_files(...)</code> 仍可用（会映射到统一文件工具）</li>
       <li>如果 TG 文件名看起来像随机串，请查看 <code>displayName</code>（新上传文件会尽量保留原文件名/后缀）</li>
     </ul>
   </section>

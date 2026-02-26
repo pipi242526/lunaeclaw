@@ -24,7 +24,7 @@ from nanobot.agent.tooling import (
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.alias import install_tool_aliases
 from nanobot.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool
-from nanobot.agent.tools.media import FilesHubTool, MediaFilesTool
+from nanobot.agent.tools.media import FilesHubTool
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.web import (
     WeatherTool,
@@ -193,10 +193,8 @@ class SubagentManager:
                     self._register_subagent_web_search_initial(tools)
                 if self._tool_enabled("web_fetch"):
                     tools.register(WebFetchTool())
-                if self._tool_enabled("files_hub") or self._tool_enabled("media_files"):
+                if self._tool_enabled("files_hub"):
                     tools.register(FilesHubTool())
-                if self._tool_enabled("media_files"):
-                    tools.register(MediaFilesTool())
                 if self._tool_enabled("weather"):
                     tools.register(WeatherTool())
                 self._apply_configured_tool_aliases(tools, stage="startup")
