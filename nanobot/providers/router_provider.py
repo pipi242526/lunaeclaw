@@ -77,8 +77,10 @@ class RouterProvider(LLMProvider):
 
     def _validate_endpoint_model(self, endpoint_name: str, cfg: EndpointProviderConfig, endpoint_model: str) -> tuple[bool, str | None]:
         allowed = [m for m in (cfg.models or []) if str(m).strip()]
-        if allowed and endpoint_model not in allowed:
-            return False, f"模型 `{endpoint_model}` 不在 endpoint `{endpoint_name}` 的允许列表中"
+        if allowed:
+            full_ref = f"{endpoint_name}/{endpoint_model}"
+            if endpoint_model not in allowed and full_ref not in allowed:
+                return False, f"模型 `{endpoint_model}` 不在 endpoint `{endpoint_name}` 的允许列表中"
         etype = self._normalize_endpoint_type(cfg.type)
         if etype == "openai_compatible":
             return True, f"{endpoint_name} ({etype})"

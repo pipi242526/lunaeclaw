@@ -262,6 +262,36 @@ _CHANNEL_QUICK_SPECS: list[dict[str, Any]] = [
             {"path": "bridge_token", "label_en": "Bridge Token", "label_zh": "桥接 Token", "env_suffix": "BRIDGE_TOKEN", "required": False, "secret": True},
         ],
     },
+    {
+        "id": "email",
+        "title_en": "Email",
+        "title_zh": "Email",
+        "env_prefix": "EMAIL",
+        "allow_field": "allow_from",
+        "allow_env_prefix": "EMAIL_ALLOW_FROM",
+        "fields": [
+            {"path": "imap_host", "label_en": "IMAP Host", "label_zh": "IMAP 主机", "env_suffix": "IMAP_HOST", "required": False, "secret": False},
+            {"path": "imap_username", "label_en": "IMAP Username", "label_zh": "IMAP 用户名", "env_suffix": "IMAP_USERNAME", "required": False, "secret": False},
+            {"path": "imap_password", "label_en": "IMAP Password", "label_zh": "IMAP 密码", "env_suffix": "IMAP_PASSWORD", "required": False, "secret": True},
+            {"path": "smtp_host", "label_en": "SMTP Host", "label_zh": "SMTP 主机", "env_suffix": "SMTP_HOST", "required": False, "secret": False},
+            {"path": "smtp_username", "label_en": "SMTP Username", "label_zh": "SMTP 用户名", "env_suffix": "SMTP_USERNAME", "required": False, "secret": False},
+            {"path": "smtp_password", "label_en": "SMTP Password", "label_zh": "SMTP 密码", "env_suffix": "SMTP_PASSWORD", "required": False, "secret": True},
+            {"path": "from_address", "label_en": "From Address", "label_zh": "发件地址", "env_suffix": "FROM_ADDRESS", "required": False, "secret": False},
+        ],
+    },
+    {
+        "id": "mochat",
+        "title_en": "Mochat",
+        "title_zh": "Mochat",
+        "env_prefix": "MOCHAT",
+        "allow_field": "allow_from",
+        "allow_env_prefix": "MOCHAT_ALLOW_FROM",
+        "fields": [
+            {"path": "base_url", "label_en": "Base URL", "label_zh": "基础 URL", "env_suffix": None, "required": False, "secret": False},
+            {"path": "claw_token", "label_en": "Claw Token", "label_zh": "Claw Token", "env_suffix": "CLAW_TOKEN", "required": False, "secret": True},
+            {"path": "agent_user_id", "label_en": "Agent User ID", "label_zh": "Agent 用户 ID", "env_suffix": "AGENT_USER_ID", "required": False, "secret": False},
+        ],
+    },
 ]
 
 
@@ -503,8 +533,11 @@ def _check_default_model_ref(config: Config, model_ref: str, *, probe_remote: bo
         return False, f"endpoint not found: {endpoint_name}"
     if not ep.enabled:
         return False, f"endpoint is disabled: {endpoint_name}"
-    if ep.models and model_name not in ep.models:
-        return False, f"model '{model_name}' is not listed in endpoint '{endpoint_name}'"
+    if ep.models:
+        allowed = {str(x).strip() for x in ep.models if str(x).strip()}
+        full_ref = f"{endpoint_name}/{model_name}"
+        if model_name not in allowed and full_ref not in allowed:
+            return False, f"model '{model_name}' is not listed in endpoint '{endpoint_name}'"
 
     if ep.type not in {"openai", "openai_compatible"}:
         return True, "ok (structural check)"
@@ -1094,6 +1127,12 @@ def run_webui(
             issues = [*channel_issues]
             if not default_model_ok:
                 issues.append(f"default model: {default_model_reason}")
+            for ep_name, ep_cfg in cfg.providers.endpoints.items():
+                for model_ref in ep_cfg.models or []:
+                    text = str(model_ref).strip()
+                    if text.startswith(f"{ep_name}/"):
+                        issues.append(f"endpoint `{ep_name}` model allowlist contains endpoint prefix: `{text}`")
+                        break
             if cfg.tools.web.search.provider == "exa_mcp":
                 exa_server = cfg_resolved.tools.mcp_servers.get("exa")
                 exa_url = (exa_server.url or "") if exa_server else ""
@@ -1106,6 +1145,10 @@ def run_webui(
                 if item.startswith("default model:"):
                     action_rows.append(
                         f"<li>{escape(item)} · <a class='mono' href='/endpoints'>{t('fix in Models & APIs', '去模型与接口修复')}</a></li>"
+                    )
+                elif item.startswith("endpoint `"):
+                    action_rows.append(
+                        f"<li>{escape(item)} · <a class='mono' href='/endpoints'>{t('open endpoint and resave models', '打开端点后重新保存 models')}</a></li>"
                     )
                 elif "exa_mcp" in item:
                     action_rows.append(
@@ -1338,10 +1381,17 @@ def run_webui(
             t = (lambda en, zh_cn: zh_cn if zh else en)
             channels_json = _pretty_json(cfg.channels.model_dump(by_alias=True))
             channels_dump = cfg.channels.model_dump()
+            quick_options: list[str] = []
+            default_quick_channel = ""
             quick_cards = []
             for spec in _CHANNEL_QUICK_SPECS:
                 sid = str(spec["id"])
                 raw_channel = getattr(cfg.channels, sid)
+                if not default_quick_channel and bool(getattr(raw_channel, "enabled", False)):
+                    default_quick_channel = sid
+                quick_options.append(
+                    f'<option value="{escape(sid)}">{escape(t(str(spec["title_en"]), str(spec["title_zh"])))}</option>'
+                )
                 resolved_channel = getattr(cfg_resolved.channels, sid)
                 env_fields = [f for f in spec["fields"] if f.get("env_suffix")]
                 auth_mode = "env_placeholders"
@@ -1394,7 +1444,7 @@ def run_webui(
 
                 quick_cards.append(
                     f"""
-<section class="card">
+<section class="card quick-channel-card" data-channel="{escape(sid)}" style="display:none;">
   <h3>{escape(t(str(spec['title_en']), str(spec['title_zh'])))}</h3>
   <div class="field"><label><input type="checkbox" name="ch_{escape(sid)}_enabled" {"checked" if bool(getattr(raw_channel, "enabled", False)) else ""}> {t("enabled", "启用")}</label></div>
   <div class="endpoint-fields">
@@ -1429,6 +1479,8 @@ def run_webui(
 </section>
 """
                 )
+            if not default_quick_channel and _CHANNEL_QUICK_SPECS:
+                default_quick_channel = str(_CHANNEL_QUICK_SPECS[0]["id"])
             cards = []
             for name in ["telegram", "discord", "feishu", "dingtalk", "qq", "slack", "whatsapp", "email", "mochat"]:
                 item = channels_dump.get(name) or {}
@@ -1458,14 +1510,40 @@ def run_webui(
   <h2>{t("Multi-channel Quick Setup (Generic)", "多渠道通用快速配置")}</h2>
   <form method="post">
     <input type="hidden" name="action" value="save_channels_quick">
-    <div class="grid cols-2">
+    <input type="hidden" name="quick_channel_id" id="quick_channel_id" value="{escape(default_quick_channel)}">
+    <div class="field">
+      <label>{t("Select channel", "选择渠道")}</label>
+      <select id="quick_channel_picker">
+        {''.join(quick_options)}
+      </select>
+    </div>
+    <div>
       {''.join(quick_cards)}
     </div>
     <div class="row" style="margin-top:12px">
-      <button class="btn primary" type="submit">{t("Save Quick Setup", "保存通用快速配置")}</button>
-      <span class="muted">{t("Supports env placeholders and plain values; all selected channels are saved together.", "支持 env 占位与明文；可一次性保存多个渠道。")}</span>
+      <button class="btn primary" type="submit">{t("Save Selected Channel", "保存当前渠道配置")}</button>
+      <span class="muted">{t("Choose one channel, edit fields below, then save.", "先选择渠道，再编辑下方配置并保存。")}</span>
     </div>
   </form>
+  <script>
+    (function bindQuickChannelPicker() {{
+      const picker = document.getElementById('quick_channel_picker');
+      const hidden = document.getElementById('quick_channel_id');
+      const cards = Array.from(document.querySelectorAll('.quick-channel-card'));
+      if (!picker || !hidden || cards.length === 0) return;
+      function showSelected() {{
+        const selected = picker.value;
+        hidden.value = selected;
+        for (const card of cards) {{
+          const hit = card.getAttribute('data-channel') === selected;
+          card.style.display = hit ? 'block' : 'none';
+        }}
+      }}
+      picker.value = hidden.value || picker.options[0].value;
+      picker.addEventListener('change', showSelected);
+      showSelected();
+    }})();
+  </script>
 </section>
 <div class="split">
   <section class="card">
@@ -1929,13 +2007,20 @@ def run_webui(
             api_base = self._form_str(form, "api_base").strip() or None
             api_key = self._form_str(form, "api_key").strip()
             models = _parse_csv(self._form_str(form, "models_csv"))
+            normalized_models: list[str] = []
+            for item in models:
+                text = item.strip()
+                if text.startswith(f"{name}/"):
+                    text = text[len(name) + 1 :].strip()
+                if text and text not in normalized_models:
+                    normalized_models.append(text)
             headers = _safe_json_object(self._form_str(form, "extra_headers_json", "{}"), "extra_headers")
             ep = EndpointProviderConfig(
                 type=cfg_type,
                 api_base=api_base,
                 api_key=api_key,
                 extra_headers=headers or None,
-                models=models,
+                models=normalized_models,
                 enabled=self._form_bool(form, "enabled"),
             )
 
@@ -1949,7 +2034,11 @@ def run_webui(
             cfg = self._load_config()
             action = self._form_str(form, "action")
             if action == "save_channels_quick":
-                for spec in _CHANNEL_QUICK_SPECS:
+                selected_channel = self._form_str(form, "quick_channel_id", "").strip().lower()
+                selected_specs = [s for s in _CHANNEL_QUICK_SPECS if str(s["id"]).lower() == selected_channel]
+                if not selected_specs:
+                    raise ValueError("请选择一个有效渠道")
+                for spec in selected_specs:
                     sid = str(spec["id"])
                     channel_obj = getattr(cfg.channels, sid)
                     setattr(channel_obj, "enabled", self._form_bool(form, f"ch_{sid}_enabled"))
@@ -1984,7 +2073,7 @@ def run_webui(
                     setattr(cfg.channels, sid, channel_obj)
 
                 self._save_config(cfg)
-                self._redirect("/channels", msg="多渠道快速配置已保存（如改 token/secret，请重启 gateway）")
+                self._redirect("/channels", msg=f"渠道 `{selected_channel}` 配置已保存（如改 token/secret，请重启 gateway）")
                 return
 
             if action == "save_channels_json":
