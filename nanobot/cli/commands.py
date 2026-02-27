@@ -1216,7 +1216,13 @@ def cron_run(
 def status():
     """Show nanobot status."""
     from nanobot.config.loader import load_config, get_config_path, _discover_env_files
-    from nanobot.utils.helpers import get_mcp_home, get_global_skills_path, get_env_dir, get_env_file
+    from nanobot.utils.helpers import (
+        get_mcp_home,
+        get_global_skills_path,
+        get_env_dir,
+        get_env_file,
+        get_exports_dir,
+    )
     from nanobot.agent.skills import SkillsLoader
     from nanobot.agent.tools.web import has_exa_search_mcp
 
@@ -1280,6 +1286,13 @@ def status():
 
         builtins = config.tools.enabled or ["(all built-in tools enabled)"]
         console.print(f"Built-in tools: {', '.join(builtins)}")
+        effective_exports_dir = get_exports_dir(config.tools.files_hub.exports_dir)
+        configured_exports = (config.tools.files_hub.exports_dir or "").strip()
+        console.print(
+            "Files hub exports dir: "
+            f"{effective_exports_dir} "
+            f"({'default' if not configured_exports else f'configured={configured_exports}'})"
+        )
         ccfg = config.tools.claude_code
         cc_tool_enabled = bool(ccfg.enabled)
         cc_tool_whitelisted = (not config.tools.enabled) or ("claude_code" in {t.lower() for t in config.tools.enabled})
@@ -1435,7 +1448,13 @@ def status():
 def doctor():
     """Diagnose configuration/tooling issues and suggest fixes."""
     from nanobot.config.loader import load_config, get_config_path, _discover_env_files
-    from nanobot.utils.helpers import get_mcp_home, get_global_skills_path, get_env_file, get_env_dir
+    from nanobot.utils.helpers import (
+        get_mcp_home,
+        get_global_skills_path,
+        get_env_file,
+        get_env_dir,
+        get_exports_dir,
+    )
     from nanobot.agent.skills import SkillsLoader
 
     config_path = get_config_path()
@@ -1451,6 +1470,12 @@ def doctor():
     console.print(f"- MCP home: {get_mcp_home()}")
     console.print(f"- Env file: {get_env_file()} ({'exists' if get_env_file().exists() else 'missing'})")
     console.print(f"- Env dir: {get_env_dir()} ({'exists' if get_env_dir().exists() else 'missing'})")
+    effective_exports_dir = get_exports_dir(config.tools.files_hub.exports_dir)
+    configured_exports = (config.tools.files_hub.exports_dir or "").strip()
+    console.print(
+        f"- Exports dir: {effective_exports_dir} "
+        f"({'default' if not configured_exports else f'configured={configured_exports}'})"
+    )
     env_files = _discover_env_files()
     console.print(f"- Env helper files: {len(env_files)}")
 

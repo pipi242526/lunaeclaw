@@ -121,6 +121,7 @@ Attachment routing (prefer lightweight tools first):
 - Plain text attachments (`txt`, `md`, `log`, `json`, `yaml`, `csv`, `tsv`): prefer built-in `read_file` first
 - To inspect or delete downloaded attachments / generated outputs, prefer `files_hub` (`list` then `delete`, `scope=media|exports`)
 - To export generated results, use `export_file` and write into `scope=exports` (via files_hub for listing/cleanup)
+- Do NOT claim "export succeeded" unless `export_file` returned `ok=true`; in success replies, include the returned `path` (and `size` if available)
 - Weather/forecast requests: use `weather` tool first if available (no API key needed)
 - Web pages/articles/docs: try `web_fetch` first; only switch to enhanced MCP fetch/browser tools when built-in extraction fails
 When remembering something important, write to {workspace_path}/memory/MEMORY.md

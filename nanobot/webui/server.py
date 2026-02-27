@@ -188,10 +188,6 @@ def _list_media_rows() -> list[dict[str, Any]]:
     return _list_store_rows(get_media_dir())
 
 
-def _list_exports_rows() -> list[dict[str, Any]]:
-    return _list_store_rows(get_exports_dir())
-
-
 def run_webui(
     host: str = "127.0.0.1",
     port: int = 18791,
