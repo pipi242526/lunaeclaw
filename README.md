@@ -1002,6 +1002,19 @@ Requirements:
 
 Interactive mode exits: `exit`, `quit`, `/exit`, `/quit`, `:q`, or `Ctrl+D`.
 
+### Release Smoke Check
+
+Before publishing/deploying, run the focused smoke script:
+
+```bash
+./scripts/release_smoke.sh
+```
+
+It validates:
+- critical module compile checks
+- focused tests for language hints / files hub / export tool / web fetch
+- optional `nanobot status` + `nanobot doctor` runtime sanity (if `nanobot` is in PATH)
+
 Chat slash commands (CLI and chat channels):
 - `/new` — archive+clear current conversation session
 - `/model` — show current model (default or session override)
