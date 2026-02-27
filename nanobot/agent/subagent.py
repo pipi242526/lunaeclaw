@@ -23,6 +23,7 @@ from nanobot.agent.tooling import (
 )
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.alias import install_tool_aliases
+from nanobot.agent.tools.export import ExportFileTool
 from nanobot.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool
 from nanobot.agent.tools.media import FilesHubTool
 from nanobot.agent.tools.shell import ExecTool
@@ -63,6 +64,7 @@ class SubagentManager:
         mcp_disabled_tools: list[str] | None = None,
         tool_aliases: dict[str, str] | None = None,
         enabled_tools: list[str] | None = None,
+        files_hub_exports_dir: str = "",
     ):
         from nanobot.config.schema import ExecToolConfig
         self.provider = provider
@@ -88,6 +90,7 @@ class SubagentManager:
         self._prefer_exa_mcp_web_search = self._should_try_exa_mcp_search()
         self.tool_aliases = normalize_tool_aliases(tool_aliases)
         self.enabled_tools = normalize_name_set(enabled_tools)
+        self.files_hub_exports_dir = files_hub_exports_dir or ""
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
     
     def _tool_enabled(self, name: str) -> bool:
@@ -162,7 +165,8 @@ class SubagentManager:
                 # Build subagent tools (no message tool, no spawn tool)
                 tools = ToolRegistry()
                 allowed_dir = self.workspace if self.restrict_to_workspace else None
-                extra_read_dirs = [get_media_dir(), get_exports_dir()] if self.restrict_to_workspace else None
+                exports_dir = get_exports_dir(self.files_hub_exports_dir)
+                extra_read_dirs = [get_media_dir(), exports_dir] if self.restrict_to_workspace else None
                 if self._tool_enabled("read_file"):
                     tools.register(
                         ReadFileTool(
@@ -194,7 +198,9 @@ class SubagentManager:
                 if self._tool_enabled("web_fetch"):
                     tools.register(WebFetchTool())
                 if self._tool_enabled("files_hub"):
-                    tools.register(FilesHubTool())
+                    tools.register(FilesHubTool(exports_dir=exports_dir))
+                if self._tool_enabled("export_file"):
+                    tools.register(ExportFileTool(exports_dir=exports_dir))
                 if self._tool_enabled("weather"):
                     tools.register(WeatherTool())
                 self._apply_configured_tool_aliases(tools, stage="startup")

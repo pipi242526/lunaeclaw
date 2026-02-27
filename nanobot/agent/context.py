@@ -120,12 +120,12 @@ Attachment routing (prefer lightweight tools first):
 - PDF/Word/PPT/Excel and other documents: use `doc_read` if available
 - Plain text attachments (`txt`, `md`, `log`, `json`, `yaml`, `csv`, `tsv`): prefer built-in `read_file` first
 - To inspect or delete downloaded attachments / generated outputs, prefer `files_hub` (`list` then `delete`, `scope=media|exports`)
+- To export generated results, use `export_file` and write into `scope=exports` (via files_hub for listing/cleanup)
 - Weather/forecast requests: use `weather` tool first if available (no API key needed)
 - Web pages/articles/docs: try `web_fetch` first; only switch to enhanced MCP fetch/browser tools when built-in extraction fails
 When remembering something important, write to {workspace_path}/memory/MEMORY.md
 To recall past events, grep {workspace_path}/memory/HISTORY.md"""
 
-    @staticmethod
     @staticmethod
     def _normalize_language_code(value: str | None) -> str:
         raw = (value or "").strip()

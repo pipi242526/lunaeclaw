@@ -281,6 +281,12 @@ class ClaudeCodeToolConfig(Base):
     max_output_chars: int = 12000  # Tool-level output cap before agent-level truncation
 
 
+class FilesHubConfig(Base):
+    """Unified file store configuration."""
+
+    exports_dir: str = ""  # Empty -> ~/.nanobot/exports
+
+
 class MCPServerConfig(Base):
     """MCP server connection configuration (stdio or HTTP)."""
 
@@ -298,6 +304,7 @@ class ToolsConfig(Base):
     web: WebToolsConfig = Field(default_factory=WebToolsConfig)
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
     claude_code: ClaudeCodeToolConfig = Field(default_factory=ClaudeCodeToolConfig)
+    files_hub: FilesHubConfig = Field(default_factory=FilesHubConfig)
     enabled: list[str] = Field(default_factory=list)  # Empty means all built-in tools enabled
     aliases: dict[str, str] = Field(default_factory=dict)  # alias_name -> target_tool_name
     restrict_to_workspace: bool = False  # If true, restrict all tool access to workspace directory

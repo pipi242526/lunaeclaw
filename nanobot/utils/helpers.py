@@ -55,8 +55,16 @@ def get_media_dir() -> Path:
     return ensure_dir(get_data_path() / "media")
 
 
-def get_exports_dir() -> Path:
-    """Get the generated output files directory (~/.nanobot/exports)."""
+def get_exports_dir(custom_dir: str | Path | None = None) -> Path:
+    """Get the generated output files directory.
+
+    If `custom_dir` is provided, relative paths are resolved under ~/.nanobot.
+    """
+    if custom_dir:
+        p = Path(custom_dir).expanduser()
+        if not p.is_absolute():
+            p = get_data_path() / p
+        return ensure_dir(p)
     return ensure_dir(get_data_path() / "exports")
 
 

@@ -859,6 +859,10 @@ def run_webui(
             self._send_html(200, self._page("MCP & Skills", body, tab="/extensions", msg=msg, err=err))
 
         def _render_media(self, *, msg: str = "", err: str = "") -> None:
+            cfg = self._load_config()
+            configured_exports_dir = (cfg.tools.files_hub.exports_dir or "").strip()
+            effective_exports_dir = get_exports_dir(configured_exports_dir)
+
             def _render_store_block(
                 *,
                 scope: str,
@@ -910,9 +914,9 @@ def run_webui(
 """
 
             media_rows = _list_media_rows()
-            export_rows = _list_exports_rows()
+            export_rows = _list_store_rows(effective_exports_dir)
             media_dir = get_media_dir()
-            exports_dir = get_exports_dir()
+            exports_dir = effective_exports_dir
             body = f"""
 <div class="grid cols-2">
   <section class="card">
@@ -934,6 +938,17 @@ def run_webui(
     </ul>
   </section>
 </div>
+<form method="post" class="card" style="margin-top:14px">
+  <h2>导出目录设置</h2>
+  <div class="field">
+    <label>tools.filesHub.exportsDir（留空=默认 <code>~/.nanobot/exports</code>）</label>
+    <input name="exports_dir" value="{escape(configured_exports_dir)}" placeholder="例如：/data/nanobot-exports 或 exports">
+  </div>
+  <div class="row">
+    <button class="btn primary" type="submit" name="action" value="save_exports_dir">保存导出目录</button>
+    <button class="btn subtle" type="submit" name="action" value="save_exports_dir_default">恢复默认目录</button>
+  </div>
+</form>
 {_render_store_block(
     scope="media",
     title="媒体目录（上传附件）",
@@ -1059,9 +1074,18 @@ def run_webui(
 
         def _handle_post_media(self, form: dict[str, list[str]]) -> None:
             action = self._form_str(form, "action")
+            if action in {"save_exports_dir", "save_exports_dir_default"}:
+                cfg = self._load_config()
+                raw = self._form_str(form, "exports_dir", "").strip()
+                cfg.tools.files_hub.exports_dir = "" if action == "save_exports_dir_default" else raw
+                self._save_config(cfg)
+                self._redirect("/media", msg="导出目录设置已保存")
+                return
+
             scope = (self._form_str(form, "scope", "media") or "media").strip().lower()
             if scope == "exports":
-                root_dir = get_exports_dir().resolve()
+                cfg = self._load_config()
+                root_dir = get_exports_dir(cfg.tools.files_hub.exports_dir).resolve()
                 scope_label = "导出目录"
             else:
                 scope = "media"

@@ -27,6 +27,7 @@ from nanobot.agent.tooling import (
 from nanobot.agent.tools.cron import CronTool
 from nanobot.agent.tools.claude_code import ClaudeCodeTool
 from nanobot.agent.tools.alias import install_tool_aliases
+from nanobot.agent.tools.export import ExportFileTool
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from nanobot.agent.tools.media import FilesHubTool
 from nanobot.agent.tools.message import MessageTool
@@ -91,6 +92,7 @@ class AgentLoop:
         disabled_skills: list[str] | None = None,
         reply_language: str = "auto",
         cross_lingual_search: bool = True,
+        files_hub_exports_dir: str = "",
     ):
         from nanobot.config.schema import ExecToolConfig
         self.bus = bus
@@ -109,6 +111,7 @@ class AgentLoop:
         self.disabled_skills = normalize_name_set(disabled_skills)
         self.web_search_provider = normalize_web_search_provider(web_search_provider)
         self.tool_aliases = normalize_tool_aliases(tool_aliases)
+        self.files_hub_exports_dir = files_hub_exports_dir or ""
 
         self.context = ContextBuilder(
             workspace,
@@ -148,6 +151,7 @@ class AgentLoop:
             mcp_disabled_tools=mcp_disabled_tools,
             tool_aliases=self.tool_aliases,
             enabled_tools=enabled_tools,
+            files_hub_exports_dir=self.files_hub_exports_dir,
         )
 
         self._running = False
@@ -180,7 +184,8 @@ class AgentLoop:
     def _register_default_tools(self) -> None:
         """Register the default set of tools."""
         allowed_dir = self.workspace if self.restrict_to_workspace else None
-        extra_read_dirs = [get_media_dir(), get_exports_dir()] if self.restrict_to_workspace else None
+        exports_dir = get_exports_dir(self.files_hub_exports_dir)
+        extra_read_dirs = [get_media_dir(), exports_dir] if self.restrict_to_workspace else None
         file_tools = (
             ("read_file", ReadFileTool),
             ("write_file", WriteFileTool),
@@ -213,7 +218,9 @@ class AgentLoop:
         if self._tool_enabled("web_fetch"):
             self.tools.register(WebFetchTool())
         if self._tool_enabled("files_hub"):
-            self.tools.register(FilesHubTool())
+            self.tools.register(FilesHubTool(exports_dir=exports_dir))
+        if self._tool_enabled("export_file"):
+            self.tools.register(ExportFileTool(exports_dir=exports_dir))
         if self._tool_enabled("weather"):
             self.tools.register(WeatherTool())
         if self._tool_enabled("claude_code") and self.claude_code_config and self.claude_code_config.enabled:

@@ -558,6 +558,7 @@ def gateway(
         disabled_skills=config.skills.disabled,
         reply_language=config.agents.defaults.reply_language,
         cross_lingual_search=config.agents.defaults.cross_lingual_search,
+        files_hub_exports_dir=config.tools.files_hub.exports_dir,
     )
     
     # Set cron callback (needs agent)
@@ -685,6 +686,7 @@ def agent(
         disabled_skills=config.skills.disabled,
         reply_language=config.agents.defaults.reply_language,
         cross_lingual_search=config.agents.defaults.cross_lingual_search,
+        files_hub_exports_dir=config.tools.files_hub.exports_dir,
     )
     
     # Show spinner when logs are off (no output to miss); skip when logs are on
@@ -1174,6 +1176,7 @@ def cron_run(
         disabled_skills=config.skills.disabled,
         reply_language=config.agents.defaults.reply_language,
         cross_lingual_search=config.agents.defaults.cross_lingual_search,
+        files_hub_exports_dir=config.tools.files_hub.exports_dir,
     )
 
     store_path = get_data_dir() / "cron" / "jobs.json"
