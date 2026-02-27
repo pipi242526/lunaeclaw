@@ -180,6 +180,32 @@
 - 使用 `doc_read` / `image_read` 别名可以保持稳定调用习惯
 - `github` skill 建议保留（依赖 `gh`，但比 GitHub MCP 更轻）
 
+### 4.1.2 第三阶段：WebUI 工具策略联动
+
+`MCP & Skills` 页面已支持可视化编辑以下项（不必手改 JSON）：
+
+- 内置工具白名单（`tools.enabled`，支持“全部启用”）
+- 工具别名（`tools.aliases`，每行 `alias = target`）
+- MCP 服务/工具过滤（`mcpEnabled*` / `mcpDisabled*`）
+
+这意味着你可以在 WebUI 完成“启用哪些工具 + 别名映射 + MCP 过滤”的一次性联调，再用 JSON 作为兜底高级编辑器。
+
+### 4.1.3 第三阶段：页面拆分 + 新手友好 + 多语言
+
+WebUI 已按职责拆分为独立页面：
+
+- `MCP`：MCP 服务器状态、模板库安装、隐私说明
+- `Skills`：技能启用/禁用、技能包一键应用
+- `Tools Policy`：工具白名单、alias、MCP 过滤可视化编辑
+
+同时新增：
+
+- 语言切换：默认英文（`lang=en`），可切换中文（`lang=zh-CN`）
+- 隐私保护：MCP URL 展示自动脱敏（`apiKey/token/secret/password`）
+- 新手模板：
+  - MCP 模板库：Exa / Docloader 一键安装
+  - 技能包：Starter / Developer / Minimal
+
 ### 4.2 离线/受限环境（尽量不报错）
 
 ```json
@@ -217,6 +243,39 @@
 - 用 `export_file` 统一导出结果文件（`txt/md/json/docx`）
 - 用 `files_hub(scope=\"exports\")` 做列表与清理
 - 输入（`media`）和输出（`exports`）分离，避免误删原件
+
+### 4.5 第一阶段/第二阶段新增：资源优化 + 语言本土化
+
+本轮新增了两类高收益低成本参数，默认即可用，也可在 WebUI 的 `Models & APIs` 页面直接调：
+
+```json
+{
+  "agents": {
+    "defaults": {
+      "replyLanguage": "auto",
+      "autoReplyFallbackLanguage": "zh-CN",
+      "crossLingualSearch": true,
+      "maxHistoryChars": 32000,
+      "maxMemoryContextChars": 12000,
+      "maxBackgroundContextChars": 22000,
+      "maxInlineImageBytes": 400000,
+      "autoCompactBackground": true,
+      "systemPromptCacheTtlSeconds": 20,
+      "sessionCacheMaxEntries": 16,
+      "gcEveryTurns": 12
+    }
+  }
+}
+```
+
+说明：
+
+- `maxHistoryChars` / `maxMemoryContextChars`：直接控制请求上下文体积，降低 token 消耗
+- `maxBackgroundContextChars` + `autoCompactBackground`：自动压缩背景信息（优先提取结构信号，再截断）
+- `maxInlineImageBytes`：超大图片不再内联 base64，避免一次请求爆 token，改走 `image_read`
+- `systemPromptCacheTtlSeconds`：短 TTL 缓存系统提示，减少重复 IO/拼装开销
+- `sessionCacheMaxEntries` + `gcEveryTurns`：长期运行时自动回收内存
+- `autoReplyFallbackLanguage`：当语言检测不明确时使用回退语言，默认中文；国际用户改为 `en/ja/ko` 即可
 
 ### 4.3 聊天内控制服务器 Claude Code（tmux 模式，可选）
 

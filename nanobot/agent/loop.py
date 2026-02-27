@@ -65,6 +65,7 @@ class AgentLoop:
     _CHANNEL_PROCESSING_NOTICE_DELAY_S = 8.0
     _TOOL_RESULT_MAX_CHARS = 20000
     _GC_EVERY_TURNS = 12
+    _SESSION_CACHE_MAX_ENTRIES = 16
 
     def __init__(
         self,
@@ -91,8 +92,17 @@ class AgentLoop:
         enabled_tools: list[str] | None = None,
         disabled_skills: list[str] | None = None,
         reply_language: str = "auto",
+        auto_reply_fallback_language: str = "zh-CN",
         cross_lingual_search: bool = True,
         files_hub_exports_dir: str = "",
+        max_history_chars: int = 32000,
+        max_memory_context_chars: int = 12000,
+        max_background_context_chars: int = 22000,
+        max_inline_image_bytes: int = 400000,
+        auto_compact_background: bool = True,
+        system_prompt_cache_ttl_seconds: int = 20,
+        session_cache_max_entries: int = _SESSION_CACHE_MAX_ENTRIES,
+        gc_every_turns: int = _GC_EVERY_TURNS,
     ):
         from nanobot.config.schema import ExecToolConfig
         self.bus = bus
@@ -112,14 +122,25 @@ class AgentLoop:
         self.web_search_provider = normalize_web_search_provider(web_search_provider)
         self.tool_aliases = normalize_tool_aliases(tool_aliases)
         self.files_hub_exports_dir = files_hub_exports_dir or ""
+        self._gc_every_turns = max(0, int(gc_every_turns or 0))
 
         self.context = ContextBuilder(
             workspace,
             disabled_skills=self.disabled_skills,
             reply_language_preference=reply_language,
+            auto_reply_fallback_language=auto_reply_fallback_language,
             cross_lingual_search=cross_lingual_search,
+            max_history_chars=max_history_chars,
+            max_memory_context_chars=max_memory_context_chars,
+            max_background_context_chars=max_background_context_chars,
+            max_inline_image_bytes=max_inline_image_bytes,
+            auto_compact_background=auto_compact_background,
+            system_prompt_cache_ttl_seconds=system_prompt_cache_ttl_seconds,
         )
-        self.sessions = session_manager or SessionManager(workspace)
+        self.sessions = session_manager or SessionManager(
+            workspace,
+            max_cache_entries=max(1, int(session_cache_max_entries or self._SESSION_CACHE_MAX_ENTRIES)),
+        )
         self.memory_store = MemoryStore(workspace)
         self.tools = ToolRegistry()
         self._mcp_servers = mcp_servers or {}
@@ -420,7 +441,7 @@ class AgentLoop:
             self.sessions.prune_cache(keep_keys=keep)
         except Exception:
             logger.debug("Session cache prune skipped")
-        if self._processed_turns % self._GC_EVERY_TURNS == 0:
+        if self._gc_every_turns > 0 and self._processed_turns % self._gc_every_turns == 0:
             gc.collect()
 
     async def _run_agent_loop(

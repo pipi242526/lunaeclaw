@@ -4,6 +4,7 @@ import base64
 import mimetypes
 import platform
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -20,19 +21,41 @@ class ContextBuilder:
     """
     
     BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md"]
+    _DEFAULT_MAX_HISTORY_CHARS = 32000
+    _DEFAULT_MAX_MEMORY_CONTEXT_CHARS = 12000
+    _DEFAULT_MAX_BACKGROUND_CONTEXT_CHARS = 22000
+    _DEFAULT_MAX_INLINE_IMAGE_BYTES = 400000
+    _DEFAULT_SYSTEM_PROMPT_CACHE_TTL_SECONDS = 20
     
     def __init__(
         self,
         workspace: Path,
         disabled_skills: set[str] | None = None,
         reply_language_preference: str = "auto",
+        auto_reply_fallback_language: str = "zh-CN",
         cross_lingual_search: bool = True,
+        max_history_chars: int = _DEFAULT_MAX_HISTORY_CHARS,
+        max_memory_context_chars: int = _DEFAULT_MAX_MEMORY_CONTEXT_CHARS,
+        max_background_context_chars: int = _DEFAULT_MAX_BACKGROUND_CONTEXT_CHARS,
+        max_inline_image_bytes: int = _DEFAULT_MAX_INLINE_IMAGE_BYTES,
+        auto_compact_background: bool = True,
+        system_prompt_cache_ttl_seconds: int = _DEFAULT_SYSTEM_PROMPT_CACHE_TTL_SECONDS,
     ):
         self.workspace = workspace
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace, disabled_skills=disabled_skills)
         self.reply_language_preference = (reply_language_preference or "auto").strip() or "auto"
+        self.auto_reply_fallback_language = self._normalize_language_code(auto_reply_fallback_language)
         self.cross_lingual_search = bool(cross_lingual_search)
+        self.max_history_chars = max(0, int(max_history_chars or 0))
+        self.max_memory_context_chars = max(0, int(max_memory_context_chars or 0))
+        self.max_background_context_chars = max(0, int(max_background_context_chars or 0))
+        self.max_inline_image_bytes = max(0, int(max_inline_image_bytes or 0))
+        self.auto_compact_background = bool(auto_compact_background)
+        self.system_prompt_cache_ttl_seconds = max(0, int(system_prompt_cache_ttl_seconds or 0))
+        self._cached_system_prompt_key: tuple[str, ...] | None = None
+        self._cached_system_prompt_text: str | None = None
+        self._cached_system_prompt_ts: float = 0.0
     
     def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
         """
@@ -44,6 +67,15 @@ class ContextBuilder:
         Returns:
             Complete system prompt.
         """
+        cache_key = tuple(sorted((skill_names or [])))
+        if (
+            self.system_prompt_cache_ttl_seconds > 0
+            and self._cached_system_prompt_key == cache_key
+            and self._cached_system_prompt_text is not None
+            and (time.monotonic() - self._cached_system_prompt_ts) <= self.system_prompt_cache_ttl_seconds
+        ):
+            return self._cached_system_prompt_text
+
         parts = []
         
         # Core identity
@@ -52,10 +84,20 @@ class ContextBuilder:
         # Bootstrap files
         bootstrap = self._load_bootstrap_files()
         if bootstrap:
-            parts.append(bootstrap)
+            parts.append(
+                self._compact_background_text(
+                    bootstrap,
+                    self.max_background_context_chars,
+                    label="bootstrap context",
+                )
+            )
         
         # Memory context
-        memory = self.memory.get_memory_context()
+        memory = self._truncate_text_for_budget(
+            self.memory.get_memory_context(),
+            self.max_memory_context_chars,
+            label="MEMORY context",
+        )
         if memory:
             parts.append(f"# Memory\n\n{memory}")
         
@@ -65,19 +107,94 @@ class ContextBuilder:
         if always_skills:
             always_content = self.skills.load_skills_for_context(always_skills)
             if always_content:
-                parts.append(f"# Active Skills\n\n{always_content}")
+                parts.append(
+                    self._compact_background_text(
+                        f"# Active Skills\n\n{always_content}",
+                        max(0, self.max_background_context_chars // 2),
+                        label="active skills context",
+                    )
+                )
         
         # 2. Available skills: only show summary (agent uses read_file to load)
         skills_summary = self.skills.build_skills_summary()
         if skills_summary:
-            parts.append(f"""# Skills
+            parts.append(self._compact_background_text(f"""# Skills
 
 The following skills extend your capabilities. To use a skill, read its SKILL.md file using the read_file tool.
 Skills with available="false" need dependencies installed first - you can try installing them with apt/brew.
 
-{skills_summary}""")
+{skills_summary}""",
+                    max(0, self.max_background_context_chars // 2),
+                    label="skills summary context",
+                ))
         
-        return "\n\n---\n\n".join(parts)
+        prompt = "\n\n---\n\n".join(parts)
+        if self.system_prompt_cache_ttl_seconds > 0:
+            self._cached_system_prompt_key = cache_key
+            self._cached_system_prompt_text = prompt
+            self._cached_system_prompt_ts = time.monotonic()
+        return prompt
+
+    @staticmethod
+    def _truncate_text_for_budget(text: str, budget_chars: int, *, label: str) -> str:
+        if not text:
+            return text
+        if budget_chars <= 0 or len(text) <= budget_chars:
+            return text
+        omitted = len(text) - budget_chars
+        tail = f"\n\n[... {label} truncated by nanobot: {omitted} chars omitted for token control ...]"
+        keep = max(0, budget_chars - len(tail))
+        return text[:keep] + tail
+
+    def _compact_background_text(self, text: str, budget_chars: int, *, label: str) -> str:
+        if not text:
+            return text
+        if budget_chars <= 0 or len(text) <= budget_chars:
+            return text
+        if not self.auto_compact_background:
+            return self._truncate_text_for_budget(text, budget_chars, label=label)
+
+        lines = [line.rstrip() for line in text.splitlines()]
+        signal_lines: list[str] = []
+        seen: set[str] = set()
+
+        def _push(line: str) -> None:
+            v = (line or "").strip()
+            if not v or v in seen:
+                return
+            seen.add(v)
+            signal_lines.append(v)
+
+        for line in lines:
+            s = line.strip()
+            if not s:
+                continue
+            low = s.lower()
+            if (
+                s.startswith("#")
+                or s.startswith("- ")
+                or s.startswith("* ")
+                or bool(re.match(r"^\d+\.\s", s))
+                or "important" in low
+                or "must" in low
+                or "do not" in low
+                or "policy" in low
+            ):
+                _push(s)
+
+        for line in lines[:8]:
+            _push(line)
+        for line in lines[-8:]:
+            _push(line)
+
+        if not signal_lines:
+            return self._truncate_text_for_budget(text, budget_chars, label=label)
+
+        compacted = (
+            f"[auto-compacted {label}: reduced from {len(text)} chars]\n"
+            + "\n".join(signal_lines)
+        )
+        return self._truncate_text_for_budget(compacted, budget_chars, label=label)
     
     def _get_identity(self) -> str:
         """Get the core identity section."""
@@ -154,6 +271,7 @@ To recall past events, grep {workspace_path}/memory/HISTORY.md"""
         cls,
         message: str,
         preferred_language: str | None = "auto",
+        fallback_language: str | None = "zh-CN",
     ) -> tuple[str, str]:
         """Heuristic language hint for the current user message."""
         pref = cls._normalize_language_code(preferred_language)
@@ -164,18 +282,36 @@ To recall past events, grep {workspace_path}/memory/HISTORY.md"""
             )
         text = (message or "").strip()
         if not text:
+            fallback = cls._normalize_language_code(fallback_language)
+            if fallback != "auto":
+                return (
+                    fallback,
+                    f"User language is unclear. Use fallback language {fallback} unless explicitly requested otherwise.",
+                )
             return ("same_as_user", "Reply in the same language as the user.")
 
         cjk_count = len(re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]", text))
+        kana_count = len(re.findall(r"[\u3040-\u30ff]", text))
+        hangul_count = len(re.findall(r"[\uac00-\ud7af]", text))
         latin_count = len(re.findall(r"[A-Za-z]", text))
+        if kana_count >= 1 and (kana_count + cjk_count) >= 2:
+            return ("ja", "The user's message appears Japanese. Final reply should be in Japanese unless they ask otherwise.")
+        if hangul_count >= 1:
+            return ("ko", "The user's message appears Korean. Final reply should be in Korean unless they ask otherwise.")
         # Chinese-heavy input: strongly force Simplified Chinese output.
-        if cjk_count >= 2 and cjk_count >= latin_count:
+        if cjk_count >= 2 and cjk_count >= latin_count and kana_count == 0:
             return (
                 "zh-CN",
                 "The user's message is in Chinese. Final reply MUST be in Simplified Chinese unless they explicitly request another language.",
             )
-        if latin_count >= 4 and cjk_count == 0:
+        if latin_count >= 4 and cjk_count == 0 and kana_count == 0 and hangul_count == 0:
             return ("en", "The user's message appears to be English. Final reply should be in English unless they ask otherwise.")
+        fallback = cls._normalize_language_code(fallback_language)
+        if fallback != "auto":
+            return (
+                fallback,
+                f"Language detection is ambiguous. Use fallback language {fallback} unless explicitly requested otherwise.",
+            )
         return ("same_as_user", "Final reply should follow the user's language.")
 
     @staticmethod
@@ -184,13 +320,58 @@ To recall past events, grep {workspace_path}/memory/HISTORY.md"""
         text = (message or "").strip()
         if not text:
             return None
-        # Start small and precise; expand later if needed.
-        japan_markers = ("日本", "东京", "大阪", "京都", "札幌", "横滨", "日元", "日经", "日本股市")
-        if any(marker in text for marker in japan_markers):
-            return (
-                "Cross-lingual search hint: topic appears Japan-related. "
-                "Prefer Japanese search keywords first (and optionally English), then answer in Chinese."
-            )
+        text_lower = text.lower()
+        locale_hints = (
+            {
+                "country": "Japan",
+                "language_name": "Japanese",
+                "language_code": "ja",
+                "markers": ("日本", "东京", "大阪", "京都", "札幌", "横滨", "日元", "日经", "日本股市", "japan", "tokyo"),
+            },
+            {
+                "country": "Korea",
+                "language_name": "Korean",
+                "language_code": "ko",
+                "markers": ("韩国", "首尔", "釜山", "韩元", "韩国股市", "korea", "seoul"),
+            },
+            {
+                "country": "Russia",
+                "language_name": "Russian",
+                "language_code": "ru",
+                "markers": ("俄罗斯", "莫斯科", "卢布", "俄股", "russia", "moscow"),
+            },
+            {
+                "country": "France",
+                "language_name": "French",
+                "language_code": "fr",
+                "markers": ("法国", "巴黎", "欧元区法国", "france", "paris"),
+            },
+            {
+                "country": "Germany",
+                "language_name": "German",
+                "language_code": "de",
+                "markers": ("德国", "柏林", "德国股市", "germany", "berlin"),
+            },
+            {
+                "country": "Spain",
+                "language_name": "Spanish",
+                "language_code": "es",
+                "markers": ("西班牙", "马德里", "spain", "madrid"),
+            },
+        )
+        for hint in locale_hints:
+            for marker in hint["markers"]:
+                if marker.isascii():
+                    if marker in text_lower:
+                        return (
+                            f"Cross-lingual search hint: topic appears {hint['country']}-related. "
+                            f"Prefer {hint['language_name']} ({hint['language_code']}) search keywords first (and optionally English), then answer in the user's language."
+                        )
+                elif marker in text:
+                    return (
+                        f"Cross-lingual search hint: topic appears {hint['country']}-related. "
+                        f"Prefer {hint['language_name']} ({hint['language_code']}) search keywords first (and optionally English), then answer in the user's language."
+                    )
         return None
 
     @classmethod
@@ -201,6 +382,7 @@ To recall past events, grep {workspace_path}/memory/HISTORY.md"""
         current_message: str | None = None,
         *,
         reply_language_preference: str = "auto",
+        auto_reply_fallback_language: str = "zh-CN",
         cross_lingual_search: bool = True,
     ) -> str:
         """Build dynamic runtime context and attach it to the tail user message."""
@@ -210,7 +392,11 @@ To recall past events, grep {workspace_path}/memory/HISTORY.md"""
         now = datetime.now().strftime("%Y-%m-%d %H:%M (%A)")
         tz = _time.strftime("%Z") or "UTC"
         lines = [f"Current Time: {now} ({tz})"]
-        lang_code, lang_rule = cls._detect_reply_language(current_message or "", preferred_language=reply_language_preference)
+        lang_code, lang_rule = cls._detect_reply_language(
+            current_message or "",
+            preferred_language=reply_language_preference,
+            fallback_language=auto_reply_fallback_language,
+        )
         lines.append(f"Reply Language Hint: {lang_code}")
         lines.append(f"Reply Language Rule: {lang_rule}")
         search_hint = cls._detect_search_locale_hint(current_message or "") if cross_lingual_search else None
@@ -245,6 +431,50 @@ To recall past events, grep {workspace_path}/memory/HISTORY.md"""
                 parts.append(f"## {filename}\n\n{content}")
         
         return "\n\n".join(parts) if parts else ""
+
+    @staticmethod
+    def _estimate_message_chars(message: dict[str, Any]) -> int:
+        content = message.get("content", "")
+        size = 0
+        if isinstance(content, str):
+            size = len(content)
+        elif isinstance(content, list):
+            for item in content:
+                if isinstance(item, dict):
+                    if isinstance(item.get("text"), str):
+                        size += len(item["text"])
+                    elif isinstance(item.get("image_url"), dict):
+                        size += 128
+                    else:
+                        size += 48
+                else:
+                    size += len(str(item))
+        else:
+            size = len(str(content))
+        # Include a small overhead for role/tool metadata.
+        return size + 48
+
+    def _trim_history_by_chars(self, history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        limit = self.max_history_chars
+        if limit <= 0:
+            return history
+        if not history:
+            return history
+        selected: list[dict[str, Any]] = []
+        used = 0
+        for msg in reversed(history):
+            msg_size = self._estimate_message_chars(msg)
+            if selected and (used + msg_size) > limit:
+                break
+            selected.append(msg)
+            used += msg_size
+            if used >= limit:
+                break
+        trimmed = list(reversed(selected))
+        for idx, msg in enumerate(trimmed):
+            if msg.get("role") == "user":
+                return trimmed[idx:]
+        return []
     
     def build_messages(
         self,
@@ -276,7 +506,7 @@ To recall past events, grep {workspace_path}/memory/HISTORY.md"""
         messages.append({"role": "system", "content": system_prompt})
 
         # History
-        messages.extend(history)
+        messages.extend(self._trim_history_by_chars(history))
 
         # Current message (with optional image attachments)
         user_content = self._build_user_content(current_message, media)
@@ -287,6 +517,7 @@ To recall past events, grep {workspace_path}/memory/HISTORY.md"""
                 chat_id,
                 current_message=current_message,
                 reply_language_preference=self.reply_language_preference,
+                auto_reply_fallback_language=self.auto_reply_fallback_language,
                 cross_lingual_search=self.cross_lingual_search,
             ),
         )
@@ -301,6 +532,7 @@ To recall past events, grep {workspace_path}/memory/HISTORY.md"""
         
         images = []
         non_image_attachments: list[str] = []
+        oversized_images: list[str] = []
         for path in media:
             p = Path(path)
             mime, _ = mimetypes.guess_type(path)
@@ -309,11 +541,16 @@ To recall past events, grep {workspace_path}/memory/HISTORY.md"""
             if not mime or not mime.startswith("image/"):
                 non_image_attachments.append(str(p))
                 continue
+            file_size = p.stat().st_size
+            if self.max_inline_image_bytes > 0 and file_size > self.max_inline_image_bytes:
+                non_image_attachments.append(str(p))
+                oversized_images.append(str(p))
+                continue
             b64 = base64.b64encode(p.read_bytes()).decode()
             images.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
 
         attachment_hint = ""
-        if non_image_attachments:
+        if non_image_attachments or oversized_images:
             plain_text_exts = {".txt", ".md", ".log", ".json", ".yaml", ".yml", ".csv", ".tsv"}
             plain_text_files = [p for p in non_image_attachments if Path(p).suffix.lower() in plain_text_exts]
             binary_doc_files = [p for p in non_image_attachments if p not in plain_text_files]
@@ -325,6 +562,12 @@ To recall past events, grep {workspace_path}/memory/HISTORY.md"""
             if binary_doc_files:
                 doc_lines = "\n".join(f"  - {p}" for p in binary_doc_files)
                 hint_lines.append(f"Document files (prefer `doc_read`):\n{doc_lines}")
+            if oversized_images:
+                large_img_lines = "\n".join(f"  - {p}" for p in oversized_images)
+                hint_lines.append(
+                    "Large images skipped for inline vision to save tokens (prefer `image_read`):\n"
+                    f"{large_img_lines}"
+                )
             attachment_hint = (
                 "\n\nAttached local files (non-image):\n"
                 f"{lines}\n"

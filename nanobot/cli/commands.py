@@ -526,7 +526,10 @@ def gateway(
     _ensure_claude_code_runtime_dependencies(config)
     bus = MessageBus()
     provider = _make_provider(config)
-    session_manager = SessionManager(config.workspace_path)
+    session_manager = SessionManager(
+        config.workspace_path,
+        max_cache_entries=config.agents.defaults.session_cache_max_entries,
+    )
     
     # Create cron service first (callback set after agent creation)
     cron_store_path = get_data_dir() / "cron" / "jobs.json"
@@ -557,8 +560,17 @@ def gateway(
         enabled_tools=config.tools.enabled,
         disabled_skills=config.skills.disabled,
         reply_language=config.agents.defaults.reply_language,
+        auto_reply_fallback_language=config.agents.defaults.auto_reply_fallback_language,
         cross_lingual_search=config.agents.defaults.cross_lingual_search,
         files_hub_exports_dir=config.tools.files_hub.exports_dir,
+        max_history_chars=config.agents.defaults.max_history_chars,
+        max_memory_context_chars=config.agents.defaults.max_memory_context_chars,
+        max_background_context_chars=config.agents.defaults.max_background_context_chars,
+        max_inline_image_bytes=config.agents.defaults.max_inline_image_bytes,
+        auto_compact_background=config.agents.defaults.auto_compact_background,
+        system_prompt_cache_ttl_seconds=config.agents.defaults.system_prompt_cache_ttl_seconds,
+        session_cache_max_entries=config.agents.defaults.session_cache_max_entries,
+        gc_every_turns=config.agents.defaults.gc_every_turns,
     )
     
     # Set cron callback (needs agent)
@@ -685,8 +697,17 @@ def agent(
         enabled_tools=config.tools.enabled,
         disabled_skills=config.skills.disabled,
         reply_language=config.agents.defaults.reply_language,
+        auto_reply_fallback_language=config.agents.defaults.auto_reply_fallback_language,
         cross_lingual_search=config.agents.defaults.cross_lingual_search,
         files_hub_exports_dir=config.tools.files_hub.exports_dir,
+        max_history_chars=config.agents.defaults.max_history_chars,
+        max_memory_context_chars=config.agents.defaults.max_memory_context_chars,
+        max_background_context_chars=config.agents.defaults.max_background_context_chars,
+        max_inline_image_bytes=config.agents.defaults.max_inline_image_bytes,
+        auto_compact_background=config.agents.defaults.auto_compact_background,
+        system_prompt_cache_ttl_seconds=config.agents.defaults.system_prompt_cache_ttl_seconds,
+        session_cache_max_entries=config.agents.defaults.session_cache_max_entries,
+        gc_every_turns=config.agents.defaults.gc_every_turns,
     )
     
     # Show spinner when logs are off (no output to miss); skip when logs are on
@@ -1175,8 +1196,17 @@ def cron_run(
         enabled_tools=config.tools.enabled,
         disabled_skills=config.skills.disabled,
         reply_language=config.agents.defaults.reply_language,
+        auto_reply_fallback_language=config.agents.defaults.auto_reply_fallback_language,
         cross_lingual_search=config.agents.defaults.cross_lingual_search,
         files_hub_exports_dir=config.tools.files_hub.exports_dir,
+        max_history_chars=config.agents.defaults.max_history_chars,
+        max_memory_context_chars=config.agents.defaults.max_memory_context_chars,
+        max_background_context_chars=config.agents.defaults.max_background_context_chars,
+        max_inline_image_bytes=config.agents.defaults.max_inline_image_bytes,
+        auto_compact_background=config.agents.defaults.auto_compact_background,
+        system_prompt_cache_ttl_seconds=config.agents.defaults.system_prompt_cache_ttl_seconds,
+        session_cache_max_entries=config.agents.defaults.session_cache_max_entries,
+        gc_every_turns=config.agents.defaults.gc_every_turns,
     )
 
     store_path = get_data_dir() / "cron" / "jobs.json"
@@ -1286,6 +1316,20 @@ def status():
 
         builtins = config.tools.enabled or ["(all built-in tools enabled)"]
         console.print(f"Built-in tools: {', '.join(builtins)}")
+        console.print(
+            "Context budget: "
+            f"history={config.agents.defaults.max_history_chars} chars, "
+            f"memory={config.agents.defaults.max_memory_context_chars} chars, "
+            f"background={config.agents.defaults.max_background_context_chars} chars, "
+            f"inlineImage<={config.agents.defaults.max_inline_image_bytes} bytes"
+        )
+        console.print(
+            "Runtime cleanup: "
+            f"sessionCache={config.agents.defaults.session_cache_max_entries}, "
+            f"gcEveryTurns={config.agents.defaults.gc_every_turns}, "
+            f"promptCacheTTL={config.agents.defaults.system_prompt_cache_ttl_seconds}s, "
+            f"bgCompaction={'on' if config.agents.defaults.auto_compact_background else 'off'}"
+        )
         effective_exports_dir = get_exports_dir(config.tools.files_hub.exports_dir)
         configured_exports = (config.tools.files_hub.exports_dir or "").strip()
         console.print(
@@ -1481,6 +1525,18 @@ def doctor():
     console.print(
         f"- Exports dir: {effective_exports_dir} "
         f"({'default' if not configured_exports else f'configured={configured_exports}'})"
+    )
+    console.print(
+        f"- Context budget: history={config.agents.defaults.max_history_chars}, "
+        f"memory={config.agents.defaults.max_memory_context_chars}, "
+        f"background={config.agents.defaults.max_background_context_chars}, "
+        f"inlineImage={config.agents.defaults.max_inline_image_bytes}"
+    )
+    console.print(
+        f"- Runtime cleanup: sessionCache={config.agents.defaults.session_cache_max_entries}, "
+        f"gcEveryTurns={config.agents.defaults.gc_every_turns}, "
+        f"promptCacheTTL={config.agents.defaults.system_prompt_cache_ttl_seconds}s, "
+        f"bgCompaction={'on' if config.agents.defaults.auto_compact_background else 'off'}"
     )
     env_files = _discover_env_files()
     console.print(f"- Env helper files: {len(env_files)}")

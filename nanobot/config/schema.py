@@ -187,11 +187,20 @@ class AgentDefaults(Base):
     workspace: str = "~/.nanobot/workspace"
     model: str = "anthropic/claude-opus-4-5"
     reply_language: str = "auto"  # auto | zh-CN | en | ja | ...
+    auto_reply_fallback_language: str = "zh-CN"  # Fallback when language detection is ambiguous
     cross_lingual_search: bool = True  # Rewrite/search in local language for region-specific topics
     max_tokens: int = 8192
     temperature: float = 0.1
     max_tool_iterations: int = 20
     memory_window: int = 50
+    max_history_chars: int = 32000  # Approximate history budget injected into each LLM request
+    max_memory_context_chars: int = 12000  # Cap MEMORY.md context injected into system prompt
+    max_background_context_chars: int = 22000  # Cap bootstrap/skill background context in system prompt
+    max_inline_image_bytes: int = 400000  # Skip inlining oversized images to avoid token blowup
+    auto_compact_background: bool = True  # Prefer structural compaction over hard truncation for background context
+    system_prompt_cache_ttl_seconds: int = 20  # Reuse assembled system prompt to reduce CPU/IO
+    session_cache_max_entries: int = 16  # In-memory session cache limit (LRU-like prune)
+    gc_every_turns: int = 12  # Run gc.collect every N turns (0 disables)
 
 
 class AgentsConfig(Base):
