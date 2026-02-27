@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from nanobot.agent.tools.message import MessageTool
+from nanobot.agent.loop import AgentLoop
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.channels.telegram import TelegramChannel
@@ -87,6 +88,11 @@ async def test_message_tool_prefers_explicit_reply_to_over_message_id() -> None:
     await tool.execute(content="x", message_id="100", reply_to="200")
 
     assert sent[-1].reply_to == "200"
+
+
+def test_agent_loop_reply_resolution_prefers_reply_to_field() -> None:
+    value = AgentLoop._resolve_reply_to({"message_id": "100", "reply_to": "200"})
+    assert value == "200"
 
 
 class _DummyQuery:

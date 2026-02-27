@@ -351,7 +351,7 @@ class AgentLoop:
     def _resolve_reply_to(metadata: dict[str, Any] | None) -> str | None:
         if not isinstance(metadata, dict):
             return None
-        value = metadata.get("message_id") or metadata.get("reply_to")
+        value = metadata.get("reply_to") or metadata.get("message_id")
         return str(value) if value is not None and str(value).strip() else None
 
     @staticmethod
@@ -520,7 +520,7 @@ class AgentLoop:
             logger.info("Processing system message from {}", msg.sender_id)
             key = f"{channel}:{chat_id}"
             session = self.sessions.get_or_create(key)
-            self._set_tool_context(channel, chat_id, msg.metadata.get("message_id"))
+            self._set_tool_context(channel, chat_id, self._resolve_reply_to(msg.metadata))
             messages = self.context.build_messages(
                 history=session.get_history(max_messages=self.memory_window),
                 current_message=msg.content, channel=channel, chat_id=chat_id,
@@ -642,7 +642,7 @@ class AgentLoop:
             _task = asyncio.create_task(_consolidate_and_unlock())
             self._consolidation_tasks.add(_task)
 
-        self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"))
+        self._set_tool_context(msg.channel, msg.chat_id, reply_to_id)
         if message_tool := self.tools.get("message"):
             if isinstance(message_tool, MessageTool):
                 message_tool.start_turn()
