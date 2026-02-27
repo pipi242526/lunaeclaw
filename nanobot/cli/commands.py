@@ -59,7 +59,7 @@ def _apply_recommended_tool_defaults(config: Config) -> None:
 
     if "exa" not in tools.mcp_servers:
         tools.mcp_servers["exa"] = MCPServerConfig(
-            url="https://mcp.exa.ai/mcp?tools=web_search_exa,get_code_context_exa"
+            url="https://mcp.exa.ai/mcp?tools=web_search_exa,get_code_context_exa&exaApiKey=${EXA_API_KEY}"
         )
 
     if "docloader" not in tools.mcp_servers:
@@ -1431,6 +1431,12 @@ def status():
             warnings.append("web_search provider=exa_mcp but Exa MCP server is not configured")
         if provider_mode == "exa_mcp" and exa_configured and not exa_web_search_exposed:
             warnings.append("Exa MCP is active but web_search_exa is filtered by MCP tool filters")
+        exa_url = ((config.tools.mcp_servers.get("exa").url if config.tools.mcp_servers.get("exa") else "") or "").strip()
+        has_exa_key_in_url = "exaapikey=" in exa_url.lower()
+        if provider_mode == "exa_mcp" and exa_configured and not has_exa_key_in_url:
+            warnings.append("Exa MCP URL does not include exaApiKey. For production, set exaApiKey=${EXA_API_KEY}.")
+        if provider_mode == "exa_mcp" and exa_configured and has_exa_key_in_url and not os.getenv("EXA_API_KEY"):
+            warnings.append("EXA_API_KEY is not set in environment files; Exa MCP may fail or be rate-limited.")
         if config.tools.enabled and "web_search" not in {t.lower() for t in config.tools.enabled}:
             warnings.append("web_search is excluded by tools.enabled")
         for alias_name, target_name in config.tools.aliases.items():
@@ -1497,8 +1503,23 @@ def doctor():
         findings.append((
             "error",
             "web search provider is exa_mcp but MCP server 'exa' is not configured",
-            "Add tools.mcpServers.exa.url = https://mcp.exa.ai/mcp?tools=web_search_exa,get_code_context_exa",
+            "Add tools.mcpServers.exa.url = https://mcp.exa.ai/mcp?tools=web_search_exa,get_code_context_exa&exaApiKey=${EXA_API_KEY}",
         ))
+    if provider_mode == "exa_mcp" and exa_cfg:
+        exa_url = (getattr(exa_cfg, "url", "") or "").strip()
+        has_exa_key_in_url = "exaapikey=" in exa_url.lower()
+        if not has_exa_key_in_url:
+            findings.append((
+                "warn",
+                "Exa MCP is configured without exaApiKey in URL",
+                "Use .../mcp?...&exaApiKey=${EXA_API_KEY} and set EXA_API_KEY in ~/.nanobot/.env or ~/.nanobot/env/*.env.",
+            ))
+        elif not os.getenv("EXA_API_KEY"):
+            findings.append((
+                "warn",
+                "EXA_API_KEY is not set in environment files",
+                "Set EXA_API_KEY in ~/.nanobot/.env (or env/*.env) so Exa MCP can authenticate reliably.",
+            ))
 
     ccfg = config.tools.claude_code
     tool_enabled_names = {t.lower() for t in (config.tools.enabled or [])}

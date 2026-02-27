@@ -116,7 +116,7 @@
     },
     "mcpServers": {
       "exa": {
-        "url": "https://mcp.exa.ai/mcp?tools=web_search_exa,get_code_context_exa"
+        "url": "https://mcp.exa.ai/mcp?tools=web_search_exa,get_code_context_exa&exaApiKey=${EXA_API_KEY}"
       }
     },
     "mcpEnabledServers": ["exa"],
@@ -147,7 +147,7 @@
     },
     "mcpServers": {
       "exa": {
-        "url": "https://mcp.exa.ai/mcp?tools=web_search_exa,get_code_context_exa"
+        "url": "https://mcp.exa.ai/mcp?tools=web_search_exa,get_code_context_exa&exaApiKey=${EXA_API_KEY}"
       },
       "docloader": {
         "command": "uvx",
@@ -171,6 +171,8 @@
   }
 }
 ```
+
+说明：发布给他人使用时，建议要求用户自己申请 Exa Key，并在 `~/.nanobot/.env`（或 `~/.nanobot/env/*.env`）里设置 `EXA_API_KEY`。
 
 说明：
 

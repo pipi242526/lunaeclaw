@@ -15,6 +15,11 @@ This workspace uses a lightweight default setup.
 - Document loader MCP: `doc_read` / `image_read` for attachments
 - Optional web fetch enhancement MCP (enable only when built-in `web_fetch` fails)
 
+Exa MCP production note:
+- Use your own Exa key via `EXA_API_KEY` environment variable.
+- Recommended URL form:
+  `https://mcp.exa.ai/mcp?tools=web_search_exa,get_code_context_exa&exaApiKey=${EXA_API_KEY}`
+
 ## Skills Strategy
 
 - Keep always-useful skills enabled (e.g. memory, cron, github if `gh` exists)

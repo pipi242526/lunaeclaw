@@ -937,7 +937,7 @@ Example (remote MCP, no local Node process required):
     },
     "mcpServers": {
       "exa": {
-        "url": "https://mcp.exa.ai/mcp?tools=web_search_exa,get_code_context_exa"
+        "url": "https://mcp.exa.ai/mcp?tools=web_search_exa,get_code_context_exa&exaApiKey=${EXA_API_KEY}"
       }
     }
   }
@@ -948,6 +948,7 @@ Notes:
 
 - `provider: "exa_mcp"`: use Exa MCP for `web_search` (recommended/default in this branch).
 - `provider: "disabled"`: disable web search entirely.
+- You should use your own Exa API key in production. Set `EXA_API_KEY` in `~/.nanobot/.env` (or `~/.nanobot/env/*.env`).
 
 #### Optional: Control Claude Code via chat (tmux sessions)
 

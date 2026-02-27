@@ -78,7 +78,7 @@ def _apply_recommended_tool_defaults(config: Config) -> None:
         tools.web.search.provider = "exa_mcp"
     if "exa" not in tools.mcp_servers:
         tools.mcp_servers["exa"] = MCPServerConfig(
-            url="https://mcp.exa.ai/mcp?tools=web_search_exa,get_code_context_exa"
+            url="https://mcp.exa.ai/mcp?tools=web_search_exa,get_code_context_exa&exaApiKey=${EXA_API_KEY}"
         )
     if "docloader" not in tools.mcp_servers:
         tools.mcp_servers["docloader"] = MCPServerConfig(
