@@ -178,6 +178,92 @@ _SKILL_LIBRARY = [
     {"id": "summarize", "name": "summarize", "desc": "Long-content summarization."},
 ]
 
+_CHANNEL_QUICK_SPECS: list[dict[str, Any]] = [
+    {
+        "id": "telegram",
+        "title_en": "Telegram",
+        "title_zh": "Telegram",
+        "env_prefix": "TELEGRAM",
+        "allow_field": "allow_from",
+        "allow_env_prefix": "TELEGRAM_ALLOW_FROM",
+        "fields": [
+            {"path": "token", "label_en": "Bot Token", "label_zh": "Bot Token", "env_suffix": "BOT_TOKEN", "required": True, "secret": True},
+            {"path": "proxy", "label_en": "Proxy URL", "label_zh": "代理 URL", "env_suffix": None, "required": False, "secret": False},
+        ],
+    },
+    {
+        "id": "discord",
+        "title_en": "Discord",
+        "title_zh": "Discord",
+        "env_prefix": "DISCORD",
+        "allow_field": "allow_from",
+        "allow_env_prefix": "DISCORD_ALLOW_FROM",
+        "fields": [
+            {"path": "token", "label_en": "Bot Token", "label_zh": "Bot Token", "env_suffix": "BOT_TOKEN", "required": True, "secret": True},
+        ],
+    },
+    {
+        "id": "feishu",
+        "title_en": "Feishu/Lark",
+        "title_zh": "飞书/Lark",
+        "env_prefix": "FEISHU",
+        "allow_field": "allow_from",
+        "allow_env_prefix": "FEISHU_ALLOW_FROM",
+        "fields": [
+            {"path": "app_id", "label_en": "App ID", "label_zh": "App ID", "env_suffix": "APP_ID", "required": True, "secret": False},
+            {"path": "app_secret", "label_en": "App Secret", "label_zh": "App Secret", "env_suffix": "APP_SECRET", "required": True, "secret": True},
+        ],
+    },
+    {
+        "id": "dingtalk",
+        "title_en": "DingTalk",
+        "title_zh": "钉钉",
+        "env_prefix": "DINGTALK",
+        "allow_field": "allow_from",
+        "allow_env_prefix": "DINGTALK_ALLOW_FROM",
+        "fields": [
+            {"path": "client_id", "label_en": "Client ID", "label_zh": "Client ID", "env_suffix": "CLIENT_ID", "required": True, "secret": False},
+            {"path": "client_secret", "label_en": "Client Secret", "label_zh": "Client Secret", "env_suffix": "CLIENT_SECRET", "required": True, "secret": True},
+        ],
+    },
+    {
+        "id": "qq",
+        "title_en": "QQ",
+        "title_zh": "QQ",
+        "env_prefix": "QQ",
+        "allow_field": "allow_from",
+        "allow_env_prefix": "QQ_ALLOW_FROM",
+        "fields": [
+            {"path": "app_id", "label_en": "App ID", "label_zh": "App ID", "env_suffix": "APP_ID", "required": True, "secret": False},
+            {"path": "secret", "label_en": "App Secret", "label_zh": "App Secret", "env_suffix": "APP_SECRET", "required": True, "secret": True},
+        ],
+    },
+    {
+        "id": "slack",
+        "title_en": "Slack",
+        "title_zh": "Slack",
+        "env_prefix": "SLACK",
+        "allow_field": "group_allow_from",
+        "allow_env_prefix": "SLACK_GROUP_ALLOW_FROM",
+        "fields": [
+            {"path": "bot_token", "label_en": "Bot Token", "label_zh": "Bot Token", "env_suffix": "BOT_TOKEN", "required": True, "secret": True},
+            {"path": "app_token", "label_en": "App Token", "label_zh": "App Token", "env_suffix": "APP_TOKEN", "required": True, "secret": True},
+        ],
+    },
+    {
+        "id": "whatsapp",
+        "title_en": "WhatsApp",
+        "title_zh": "WhatsApp",
+        "env_prefix": "WHATSAPP",
+        "allow_field": "allow_from",
+        "allow_env_prefix": "WHATSAPP_ALLOW_FROM",
+        "fields": [
+            {"path": "bridge_url", "label_en": "Bridge URL", "label_zh": "桥接 URL", "env_suffix": None, "required": False, "secret": False},
+            {"path": "bridge_token", "label_en": "Bridge Token", "label_zh": "桥接 Token", "env_suffix": "BRIDGE_TOKEN", "required": False, "secret": True},
+        ],
+    },
+]
+
 
 def _merge_unique(items: list[str], additions: list[str]) -> list[str]:
     out: list[str] = []
@@ -247,6 +333,74 @@ def _safe_int(raw: str, field_name: str, *, minimum: int = 0) -> int:
     if value < minimum:
         raise ValueError(f"{field_name} must be >= {minimum}")
     return value
+
+
+_ENV_PLACEHOLDER_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
+
+
+def _is_env_placeholder(text: str) -> bool:
+    return bool(_ENV_PLACEHOLDER_RE.match((text or "").strip()))
+
+
+def _sanitize_env_key(raw: str, default: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_]", "_", (raw or "").strip().upper())
+    cleaned = re.sub(r"_+", "_", cleaned).strip("_")
+    if not cleaned:
+        return default
+    if not re.match(r"^[A-Za-z_]", cleaned):
+        return default
+    return cleaned
+
+
+def _get_nested_attr(obj: Any, path: str) -> Any:
+    cur = obj
+    for part in path.split("."):
+        cur = getattr(cur, part)
+    return cur
+
+
+def _set_nested_attr(obj: Any, path: str, value: Any) -> None:
+    parts = path.split(".")
+    cur = obj
+    for part in parts[:-1]:
+        cur = getattr(cur, part)
+    setattr(cur, parts[-1], value)
+
+
+def _derive_env_prefix_from_placeholders(values: list[str], default_prefix: str) -> str:
+    for raw in values or []:
+        m = _ENV_PLACEHOLDER_RE.match((raw or "").strip())
+        if not m:
+            continue
+        key = m.group(1)
+        if "_" in key:
+            return key.rsplit("_", 1)[0]
+    return default_prefix
+
+
+def _collect_channel_runtime_issues(raw_cfg: Config, resolved_cfg: Config) -> list[str]:
+    issues: list[str] = []
+    for spec in _CHANNEL_QUICK_SPECS:
+        sid = str(spec["id"])
+        raw_channel = getattr(raw_cfg.channels, sid)
+        resolved_channel = getattr(resolved_cfg.channels, sid)
+        if not bool(getattr(raw_channel, "enabled", False)):
+            continue
+        for field in spec["fields"]:
+            if not bool(field.get("required")):
+                continue
+            path = str(field["path"])
+            raw_value = str(_get_nested_attr(raw_channel, path) or "").strip()
+            resolved_value = str(_get_nested_attr(resolved_channel, path) or "").strip()
+            if resolved_value:
+                continue
+            if _is_env_placeholder(raw_value):
+                m = _ENV_PLACEHOLDER_RE.match(raw_value)
+                env_key = m.group(1) if m else raw_value
+                issues.append(f"{sid}: missing env `{env_key}`")
+            else:
+                issues.append(f"{sid}: missing `{path}`")
+    return issues
 
 
 def _collect_tool_policy_diagnostics(cfg: Config) -> list[str]:
@@ -920,10 +1074,11 @@ def run_webui(
 
         def _render_dashboard(self, *, msg: str = "", err: str = "") -> None:
             cfg = self._load_config()
+            cfg_resolved = load_config(cfg_path, apply_profiles=False, resolve_env=True)
             zh = self._ui_lang == "zh-CN"
             t = (lambda en, zh_cn: zh_cn if zh else en)
             channels_data = cfg.channels.model_dump()
-            channel_names = ["telegram", "discord", "feishu", "dingtalk", "qq", "slack", "whatsapp", "email", "mochat"]
+            channel_names = [str(x["id"]) for x in _CHANNEL_QUICK_SPECS]
             enabled_channels = [name for name in channel_names if bool((channels_data.get(name) or {}).get("enabled"))]
             endpoint_names = sorted(cfg.providers.endpoints.keys())
             mcp_servers = cfg.tools.mcp_servers or {}
@@ -932,18 +1087,66 @@ def run_webui(
             media_count = len(_list_media_rows())
             export_count = len(_list_store_rows(get_exports_dir(cfg.tools.files_hub.exports_dir)))
             default_model_ok, default_model_reason = _check_default_model_ref(
-                load_config(cfg_path, apply_profiles=False, resolve_env=True),
+                cfg_resolved,
                 cfg.agents.defaults.model,
             )
+            channel_issues = _collect_channel_runtime_issues(cfg, cfg_resolved)
+            issues = [*channel_issues]
+            if not default_model_ok:
+                issues.append(f"default model: {default_model_reason}")
+            if cfg.tools.web.search.provider == "exa_mcp":
+                exa_server = cfg_resolved.tools.mcp_servers.get("exa")
+                exa_url = (exa_server.url or "") if exa_server else ""
+                if exa_server and re.search(r"exaApiKey=(&|$)", exa_url):
+                    issues.append("exa_mcp: EXA_API_KEY not resolved")
+            health_score = max(0, 100 - len(issues) * 15)
+            ready_channel_count = max(0, len(enabled_channels) - len({x.split(":", 1)[0] for x in channel_issues}))
+            action_rows = []
+            for item in issues[:6]:
+                if item.startswith("default model:"):
+                    action_rows.append(
+                        f"<li>{escape(item)} · <a class='mono' href='/endpoints'>{t('fix in Models & APIs', '去模型与接口修复')}</a></li>"
+                    )
+                elif "exa_mcp" in item:
+                    action_rows.append(
+                        f"<li>{escape(item)} · <a class='mono' href='/mcp'>{t('fix in MCP page', '去 MCP 页面修复')}</a></li>"
+                    )
+                else:
+                    action_rows.append(
+                        f"<li>{escape(item)} · <a class='mono' href='/channels'>{t('fix in Channels page', '去渠道页面修复')}</a></li>"
+                    )
             body = f"""
 <div class="grid cols-3">
-  <section class="card"><h2>{t("Current Model", "当前模型")}</h2><div class="kpi mono">{escape(cfg.agents.defaults.model)}</div><div class="muted">{t("Default session model (/model can override per chat)", "默认会话模型（聊天内可用 /model 切换）")}</div></section>
-  <section class="card"><h2>{t("Named Endpoints", "命名端点")}</h2><div class="kpi">{len(endpoint_names)}</div><div class="muted">{escape(', '.join(endpoint_names[:6]) or t('none', '未配置'))}</div></section>
-  <section class="card"><h2>{t("Enabled Channels", "启用渠道")}</h2><div class="kpi">{len(enabled_channels)}</div><div class="muted">{escape(', '.join(enabled_channels) or t('none', '无'))}</div></section>
+  <section class="card">
+    <h2>{t("Health Score", "健康分")}</h2>
+    <div class="kpi">{health_score}</div>
+    <div class="muted">{t("Based on model/channels/MCP runtime checks", "基于模型/渠道/MCP 运行时检查")}</div>
+  </section>
+  <section class="card">
+    <h2>{t("Channels Ready", "渠道就绪")}</h2>
+    <div class="kpi">{ready_channel_count}/{len(enabled_channels)}</div>
+    <div class="muted">{escape(', '.join(enabled_channels) or t('none enabled', '未启用'))}</div>
+  </section>
+  <section class="card">
+    <h2>{t("Named Endpoints", "命名端点")}</h2>
+    <div class="kpi">{len(endpoint_names)}</div>
+    <div class="muted">{escape(', '.join(endpoint_names[:6]) or t('none', '未配置'))}</div>
+  </section>
 </div>
 <div class="split" style="margin-top:14px">
   <section class="card">
-    <h2>{t("Runtime Paths", "运行目录")}</h2>
+    <h2>{t("Actionable Checks", "待处理检查项")}</h2>
+    <ul class="list small">
+      {''.join(action_rows) or f"<li>{t('No blocking issue found.', '未发现阻塞问题。')}</li>"}
+    </ul>
+    <div class="row" style="margin-top:10px">
+      <a class="btn subtle" href="/channels">{t("Manage Channels", "管理聊天渠道")}</a>
+      <a class="btn subtle" href="/endpoints">{t("Manage Models", "管理模型端点")}</a>
+      <a class="btn subtle" href="/mcp">{t("Manage MCP", "管理 MCP")}</a>
+    </div>
+  </section>
+  <section class="card">
+    <h2>{t("Runtime Paths & Counters", "运行目录与计数")}</h2>
     <table>
       <tr><th>Config</th><td><code>{escape(str(cfg_path))}</code></td></tr>
       <tr><th>{t("Env main file", "Env 主文件")}</th><td><code>{escape(str(get_env_file()))}</code></td></tr>
@@ -952,29 +1155,10 @@ def run_webui(
       <tr><th>{t("Workspace", "工作区")}</th><td><code>{escape(str(cfg.workspace_path))}</code></td></tr>
       <tr><th>{t("Media files", "媒体文件数")}</th><td>{media_count}</td></tr>
       <tr><th>{t("Export files", "导出文件数")}</th><td>{export_count}</td></tr>
+      <tr><th>{t("Default model check", "默认模型检查")}</th><td>{'OK' if default_model_ok else 'FAIL'} ({escape(default_model_reason)})</td></tr>
+      <tr><th>{t("Unavailable skills", "不可用技能")}</th><td>{len(unavailable_skills)}</td></tr>
+      <tr><th>{t("MCP servers", "MCP 服务数")}</th><td>{len(mcp_servers)} ({len(cfg.tools.mcp_enabled_servers or [])} allowlisted)</td></tr>
     </table>
-    <div class="row" style="margin-top:10px">
-      <a class="btn subtle" href="/endpoints">{t("Manage Models", "管理模型端点")}</a>
-      <a class="btn subtle" href="/channels">{t("Manage Channels", "管理聊天渠道")}</a>
-      <a class="btn subtle" href="/mcp">{t("Manage MCP", "管理 MCP")}</a>
-      <a class="btn subtle" href="/skills">{t("Manage Skills", "管理技能")}</a>
-    </div>
-  </section>
-  <section class="card">
-    <h2>{t("Quick Diagnostics", "快速诊断（轻量）")}</h2>
-    <ul class="list small">
-      <li>web_search provider: <code>{escape(cfg.tools.web.search.provider)}</code></li>
-      <li>MCP servers: {len(mcp_servers)} configured / {len(cfg.tools.mcp_enabled_servers or [])} allowlisted</li>
-      <li>aliases: {len(cfg.tools.aliases or {})}</li>
-      <li>skills.disabled: {len(cfg.skills.disabled or [])}</li>
-      <li>{t("Unavailable enabled skills", "不可用技能（未禁用）")}: {len(unavailable_skills)}</li>
-      <li>Claude Code tool: {"enabled" if cfg.tools.claude_code.enabled else "disabled"}</li>
-      <li>history budget: {cfg.agents.defaults.max_history_chars} chars</li>
-      <li>memory budget: {cfg.agents.defaults.max_memory_context_chars} chars</li>
-      <li>background budget: {cfg.agents.defaults.max_background_context_chars} chars</li>
-      <li>reply fallback: <code>{escape(cfg.agents.defaults.auto_reply_fallback_language)}</code></li>
-      <li>{t("default model check", "默认模型检查")}: {'OK' if default_model_ok else 'FAIL'} ({escape(default_model_reason)})</li>
-    </ul>
     <div class="muted">{t("For full diagnostics, run", "更详细诊断建议使用")} <code>nanobot doctor</code></div>
   </section>
 </div>
@@ -1149,16 +1333,102 @@ def run_webui(
 
         def _render_channels(self, *, msg: str = "", err: str = "") -> None:
             cfg = self._load_config()
+            cfg_resolved = load_config(cfg_path, apply_profiles=False, resolve_env=True)
+            zh = self._ui_lang == "zh-CN"
+            t = (lambda en, zh_cn: zh_cn if zh else en)
             channels_json = _pretty_json(cfg.channels.model_dump(by_alias=True))
             channels_dump = cfg.channels.model_dump()
-            tg = cfg.channels.telegram
-            tg_allow_from_csv = ", ".join(tg.allow_from or [])
-            tg_token_is_env = tg.token.strip().startswith("${") and tg.token.strip().endswith("}")
-            tg_allow_env_prefix = "TELEGRAM_ALLOW_FROM"
-            if tg.allow_from and all(v.strip().startswith("${") and v.strip().endswith("}") for v in tg.allow_from):
-                first_key = tg.allow_from[0].strip()[2:-1]
-                if "_" in first_key:
-                    tg_allow_env_prefix = first_key.rsplit("_", 1)[0]
+            quick_cards = []
+            for spec in _CHANNEL_QUICK_SPECS:
+                sid = str(spec["id"])
+                raw_channel = getattr(cfg.channels, sid)
+                resolved_channel = getattr(cfg_resolved.channels, sid)
+                env_fields = [f for f in spec["fields"] if f.get("env_suffix")]
+                auth_mode = "env_placeholders"
+                for field in env_fields:
+                    raw_val = str(_get_nested_attr(raw_channel, str(field["path"])) or "").strip()
+                    if raw_val and not _is_env_placeholder(raw_val):
+                        auth_mode = "plain"
+                        break
+                env_prefix = str(spec["env_prefix"])
+                for field in env_fields:
+                    raw_val = str(_get_nested_attr(raw_channel, str(field["path"])) or "").strip()
+                    match = _ENV_PLACEHOLDER_RE.match(raw_val)
+                    if not match:
+                        continue
+                    suffix = f"_{field['env_suffix']}"
+                    key = match.group(1)
+                    if key.endswith(suffix):
+                        env_prefix = key[: -len(suffix)]
+                        break
+
+                allow_field = str(spec["allow_field"])
+                allow_raw = list(_get_nested_attr(raw_channel, allow_field) or [])
+                allow_resolved = list(_get_nested_attr(resolved_channel, allow_field) or [])
+                allow_mode = "env_placeholders" if (allow_raw and all(_is_env_placeholder(x) for x in allow_raw)) else "plain"
+                allow_prefix = _derive_env_prefix_from_placeholders(allow_raw, str(spec["allow_env_prefix"]))
+                allow_csv = ", ".join(allow_resolved if (allow_mode == "env_placeholders" and allow_resolved) else allow_raw)
+
+                field_rows = []
+                for field in spec["fields"]:
+                    path = str(field["path"])
+                    input_name = f"ch_{sid}_{path.replace('.', '__')}"
+                    raw_value = str(_get_nested_attr(raw_channel, path) or "")
+                    display_value = raw_value
+                    if not bool(field.get("secret")) and _is_env_placeholder(raw_value):
+                        resolved_value = str(_get_nested_attr(resolved_channel, path) or "")
+                        if resolved_value:
+                            display_value = resolved_value
+                    env_hint = ""
+                    if field.get("env_suffix"):
+                        env_hint = f"${{{env_prefix}_{field['env_suffix']}}}"
+                    label_text = t(str(field["label_en"]), str(field["label_zh"]))
+                    field_rows.append(
+                        f"""
+<div class="field">
+  <label>{escape(label_text)}</label>
+  <input type="text" name="{escape(input_name)}" value="{escape(display_value)}" placeholder="{escape(env_hint)}">
+</div>
+"""
+                    )
+
+                quick_cards.append(
+                    f"""
+<section class="card">
+  <h3>{escape(t(str(spec['title_en']), str(spec['title_zh'])))}</h3>
+  <div class="field"><label><input type="checkbox" name="ch_{escape(sid)}_enabled" {"checked" if bool(getattr(raw_channel, "enabled", False)) else ""}> {t("enabled", "启用")}</label></div>
+  <div class="endpoint-fields">
+    {''.join(field_rows)}
+    <div class="field">
+      <label>{t("credential storage", "凭据存储方式")}</label>
+      <select name="ch_{escape(sid)}_auth_mode">
+        <option value="env_placeholders" {"selected" if auth_mode == "env_placeholders" else ""}>{t("env placeholders (recommended)", "环境变量占位（推荐）")}</option>
+        <option value="plain" {"selected" if auth_mode == "plain" else ""}>{t("plain text", "明文")}</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>{t("credential env prefix", "凭据环境变量前缀")}</label>
+      <input type="text" name="ch_{escape(sid)}_env_prefix" value="{escape(env_prefix)}" placeholder="{escape(str(spec['env_prefix']))}">
+    </div>
+    <div class="field full">
+      <label>{t("allowFrom list (CSV)", "allowFrom 列表（逗号分隔）")}</label>
+      <input type="text" name="ch_{escape(sid)}_allow_csv" value="{escape(allow_csv)}" placeholder="id1, id2">
+    </div>
+    <div class="field">
+      <label>{t("allowFrom storage", "allowFrom 存储方式")}</label>
+      <select name="ch_{escape(sid)}_allow_mode">
+        <option value="env_placeholders" {"selected" if allow_mode == "env_placeholders" else ""}>{t("env placeholders (recommended)", "环境变量占位（推荐）")}</option>
+        <option value="plain" {"selected" if allow_mode == "plain" else ""}>{t("plain list", "明文列表")}</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>{t("allowFrom env prefix", "allowFrom 环境变量前缀")}</label>
+      <input type="text" name="ch_{escape(sid)}_allow_env_prefix" value="{escape(allow_prefix)}" placeholder="{escape(str(spec['allow_env_prefix']))}">
+    </div>
+  </div>
+</section>
+"""
+                )
             cards = []
             for name in ["telegram", "discord", "feishu", "dingtalk", "qq", "slack", "whatsapp", "email", "mochat"]:
                 item = channels_dump.get(name) or {}
@@ -1185,79 +1455,49 @@ def run_webui(
                 )
             body = f"""
 <section class="card" style="margin-bottom:14px">
-  <h2>Telegram 快速配置（新手推荐）</h2>
-  <form method="post" class="endpoint-fields">
-    <input type="hidden" name="action" value="save_telegram_quick">
-    <div class="field">
-      <label><input type="checkbox" name="telegram_enabled" {"checked" if tg.enabled else ""}> 启用 Telegram</label>
+  <h2>{t("Multi-channel Quick Setup (Generic)", "多渠道通用快速配置")}</h2>
+  <form method="post">
+    <input type="hidden" name="action" value="save_channels_quick">
+    <div class="grid cols-2">
+      {''.join(quick_cards)}
     </div>
-    <div class="field">
-      <label>Bot Token 模式</label>
-      <select name="telegram_token_mode">
-        <option value="env" {"selected" if tg_token_is_env else ""}>环境变量占位（推荐）</option>
-        <option value="plain" {"selected" if not tg_token_is_env else ""}>明文（仅本机私用）</option>
-      </select>
-    </div>
-    <div class="field">
-      <label>Token 环境变量名（用于 env 模式）</label>
-      <input type="text" name="telegram_token_env_var" value="TELEGRAM_BOT_TOKEN">
-    </div>
-    <div class="field">
-      <label>Token 明文（仅 plain 模式使用）</label>
-      <input type="text" name="telegram_token_plain" value="">
-    </div>
-    <div class="field full">
-      <label>allowFrom 列表（逗号分隔）</label>
-      <input type="text" name="telegram_allow_from_csv" value="{escape(tg_allow_from_csv)}" placeholder="1173477546, 12345678">
-    </div>
-    <div class="field">
-      <label>allowFrom 存储方式</label>
-      <select name="telegram_allow_from_mode">
-        <option value="env_placeholders">环境变量占位列表（推荐）</option>
-        <option value="plain">明文 ID 列表</option>
-      </select>
-    </div>
-    <div class="field">
-      <label>allowFrom 环境变量前缀（用于 env 占位）</label>
-      <input type="text" name="telegram_allow_from_env_prefix" value="{escape(tg_allow_env_prefix)}" placeholder="TELEGRAM_ALLOW_FROM">
-    </div>
-    <div class="field full row">
-      <button class="btn primary" type="submit">保存 Telegram 快速配置</button>
-      <span class="muted">示例：会写成 <code>${'{'}TELEGRAM_ALLOW_FROM_1{'}'}</code>、<code>${'{'}TELEGRAM_ALLOW_FROM_2{'}'}</code> ...</span>
+    <div class="row" style="margin-top:12px">
+      <button class="btn primary" type="submit">{t("Save Quick Setup", "保存通用快速配置")}</button>
+      <span class="muted">{t("Supports env placeholders and plain values; all selected channels are saved together.", "支持 env 占位与明文；可一次性保存多个渠道。")}</span>
     </div>
   </form>
 </section>
 <div class="split">
   <section class="card">
-    <h2>多渠道概览</h2>
+    <h2>{t("Channel Overview", "多渠道概览")}</h2>
     <table>
       <tr><th>Channel</th><th>Status</th><th>配置片段（脱敏）</th></tr>
       {''.join(cards)}
     </table>
-    <div class="muted" style="margin-top:8px">本页使用 JSON 编辑器覆盖全部 channels 配置，适合一次管理多个渠道。</div>
+    <div class="muted" style="margin-top:8px">{t("Use JSON editor below for full control of all channel fields.", "下方 JSON 编辑器可覆盖全部 channel 字段。")}</div>
   </section>
   <section class="card">
-    <h2>通道行为（全局）</h2>
+    <h2>{t("Global Channel Behavior", "通道行为（全局）")}</h2>
     <ul class="list small">
       <li>sendProgress: {'on' if cfg.channels.send_progress else 'off'}</li>
       <li>sendToolHints: {'on' if cfg.channels.send_tool_hints else 'off'}（建议关闭）</li>
-      <li>主用 TG 时建议：保持 <code>sendToolHints=false</code></li>
-      <li><code>allowFrom</code> 的 ID 通常不是密钥，不需要强制放环境变量；只有你不希望在截图/共享配置里暴露时，才建议改成 env 占位。</li>
+      <li>{t("For TG-heavy usage, keep", "主用 TG 时建议保持")} <code>sendToolHints=false</code></li>
+      <li>{t("allowFrom supports both plain IDs and env placeholders; team sharing usually prefers env placeholders.", "allowFrom 同时支持明文和环境变量占位；团队共享配置通常建议用 env 占位。")}</li>
     </ul>
-    <div class="muted">修改渠道 token/secret 后通常需要重启 gateway 才会生效。</div>
+    <div class="muted">{t("Restart gateway after changing channel token/secret.", "修改渠道 token/secret 后通常需要重启 gateway。")}</div>
   </section>
 </div>
 <form method="post" class="card" style="margin-top:14px">
-  <h2>Channels JSON 编辑器</h2>
-  <div class="field"><label>完整 channels 配置（支持 ${'{'}ENV_VAR{'}'} 占位）</label>
+  <h2>{t("Channels JSON Editor", "Channels JSON 编辑器")}</h2>
+  <div class="field"><label>{t("Full channels config (supports ${ENV_VAR})", "完整 channels 配置（支持 ${ENV_VAR} 占位）")}</label>
     <textarea name="channels_json" style="min-height:420px">{escape(channels_json)}</textarea>
   </div>
   <div class="row">
-    <button class="btn primary" type="submit" name="action" value="save_channels_json">保存 Channels</button>
+    <button class="btn primary" type="submit" name="action" value="save_channels_json">{t("Save Channels JSON", "保存 Channels JSON")}</button>
   </div>
 </form>
 """
-            self._send_html(200, self._page("Channels", body, tab="/channels", msg=msg, err=err))
+            self._send_html(200, self._page(t("Channels", "渠道"), body, tab="/channels", msg=msg, err=err))
 
         def _render_mcp(self, *, msg: str = "", err: str = "") -> None:
             cfg = self._load_config()
@@ -1708,30 +1948,43 @@ def run_webui(
         def _handle_post_channels(self, form: dict[str, list[str]]) -> None:
             cfg = self._load_config()
             action = self._form_str(form, "action")
-            if action == "save_telegram_quick":
-                tg = cfg.channels.telegram
-                tg.enabled = self._form_bool(form, "telegram_enabled")
+            if action == "save_channels_quick":
+                for spec in _CHANNEL_QUICK_SPECS:
+                    sid = str(spec["id"])
+                    channel_obj = getattr(cfg.channels, sid)
+                    setattr(channel_obj, "enabled", self._form_bool(form, f"ch_{sid}_enabled"))
 
-                token_mode = self._form_str(form, "telegram_token_mode", "env").strip()
-                token_env_var = self._form_str(form, "telegram_token_env_var", "TELEGRAM_BOT_TOKEN").strip() or "TELEGRAM_BOT_TOKEN"
-                token_plain = self._form_str(form, "telegram_token_plain").strip()
-                if token_mode == "plain":
-                    if token_plain:
-                        tg.token = token_plain
-                else:
-                    tg.token = f"${{{token_env_var}}}"
+                    auth_mode = self._form_str(form, f"ch_{sid}_auth_mode", "env_placeholders").strip()
+                    env_prefix = _sanitize_env_key(
+                        self._form_str(form, f"ch_{sid}_env_prefix", str(spec["env_prefix"])),
+                        str(spec["env_prefix"]),
+                    )
+                    for field in spec["fields"]:
+                        path = str(field["path"])
+                        form_key = f"ch_{sid}_{path.replace('.', '__')}"
+                        current_value = str(_get_nested_attr(channel_obj, path) or "")
+                        submitted = self._form_str(form, form_key, "").strip()
+                        if auth_mode == "env_placeholders" and field.get("env_suffix"):
+                            next_value = f"${{{env_prefix}_{field['env_suffix']}}}"
+                        else:
+                            next_value = submitted if submitted != "" else current_value
+                        _set_nested_attr(channel_obj, path, next_value)
 
-                allow_from_items = [x.strip() for x in self._form_str(form, "telegram_allow_from_csv", "").replace("\n", ",").split(",") if x.strip()]
-                allow_mode = self._form_str(form, "telegram_allow_from_mode", "env_placeholders").strip()
-                env_prefix = self._form_str(form, "telegram_allow_from_env_prefix", "TELEGRAM_ALLOW_FROM").strip() or "TELEGRAM_ALLOW_FROM"
-                if allow_mode == "plain":
-                    tg.allow_from = allow_from_items
-                else:
-                    tg.allow_from = [f"${{{env_prefix}_{idx + 1}}}" for idx, _ in enumerate(allow_from_items)]
+                    allow_values = _parse_csv(self._form_str(form, f"ch_{sid}_allow_csv", ""))
+                    allow_mode = self._form_str(form, f"ch_{sid}_allow_mode", "env_placeholders").strip()
+                    allow_prefix = _sanitize_env_key(
+                        self._form_str(form, f"ch_{sid}_allow_env_prefix", str(spec["allow_env_prefix"])),
+                        str(spec["allow_env_prefix"]),
+                    )
+                    if allow_mode == "env_placeholders":
+                        allow_from = [f"${{{allow_prefix}_{idx + 1}}}" for idx, _ in enumerate(allow_values)]
+                    else:
+                        allow_from = allow_values
+                    _set_nested_attr(channel_obj, str(spec["allow_field"]), allow_from)
+                    setattr(cfg.channels, sid, channel_obj)
 
-                cfg.channels.telegram = tg
                 self._save_config(cfg)
-                self._redirect("/channels", msg="Telegram 快速配置已保存（如改 token，请重启 gateway）")
+                self._redirect("/channels", msg="多渠道快速配置已保存（如改 token/secret，请重启 gateway）")
                 return
 
             if action == "save_channels_json":
