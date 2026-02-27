@@ -138,7 +138,7 @@ class MessageTool(Tool):
         try:
             await self._send_callback(msg)
             self._sent_in_turn = True
-            media_info = f" with {len(media)} attachments" if media else ""
+            media_info = f" with {len(normalized_media)} attachments" if normalized_media else ""
             return f"Message sent to {channel}:{chat_id}{media_info}"
         except Exception as e:
             return f"Error sending message: {str(e)}"

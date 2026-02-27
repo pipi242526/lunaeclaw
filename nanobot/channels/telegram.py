@@ -361,6 +361,7 @@ class TelegramChannel(BaseChannel):
     async def _on_callback_query(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle inline keyboard callback with nonce+TTL replay protection."""
         _ = context
+        self._cleanup_callback_registry()
         query = update.callback_query
         if not query:
             return
