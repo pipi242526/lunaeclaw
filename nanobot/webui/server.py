@@ -6,6 +6,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import socket
 import threading
 import urllib.error
@@ -395,6 +396,50 @@ def _set_nested_attr(obj: Any, path: str, value: Any) -> None:
     for part in parts[:-1]:
         cur = getattr(cur, part)
     setattr(cur, parts[-1], value)
+
+
+def _read_host_resource_snapshot() -> dict[str, float | int | None]:
+    out: dict[str, float | int | None] = {
+        "load1": None,
+        "load5": None,
+        "load15": None,
+        "mem_used_percent": None,
+        "disk_used_percent": None,
+    }
+    try:
+        load1, load5, load15 = os.getloadavg()
+        out["load1"] = float(load1)
+        out["load5"] = float(load5)
+        out["load15"] = float(load15)
+    except Exception:
+        pass
+
+    try:
+        total = available = None
+        with open("/proc/meminfo", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    total = int(line.split()[1]) * 1024
+                elif line.startswith("MemAvailable:"):
+                    available = int(line.split()[1]) * 1024
+        if total and available is not None and total > 0:
+            used = max(0, total - available)
+            out["mem_used_percent"] = (used / total) * 100.0
+    except Exception:
+        pass
+
+    try:
+        disk = shutil.disk_usage("/")
+        if disk.total > 0:
+            out["disk_used_percent"] = (disk.used / disk.total) * 100.0
+    except Exception:
+        pass
+    return out
+
+
+def _estimate_tokens_from_chars(chars: int) -> int:
+    # Coarse default for mixed CJK+Latin content in prompts.
+    return max(0, int(chars / 3))
 
 
 def _derive_env_prefix_from_placeholders(values: list[str], default_prefix: str) -> str:
@@ -1140,6 +1185,18 @@ def run_webui(
                     issues.append("exa_mcp: EXA_API_KEY not resolved")
             health_score = max(0, 100 - len(issues) * 15)
             ready_channel_count = max(0, len(enabled_channels) - len({x.split(":", 1)[0] for x in channel_issues}))
+            snapshot = _read_host_resource_snapshot()
+            load1 = snapshot.get("load1")
+            mem_used_percent = snapshot.get("mem_used_percent")
+            disk_used_percent = snapshot.get("disk_used_percent")
+
+            history_chars = int(cfg.agents.defaults.max_history_chars)
+            memory_chars = int(cfg.agents.defaults.max_memory_context_chars)
+            background_chars = int(cfg.agents.defaults.max_background_context_chars)
+            total_chars_budget = max(0, history_chars + memory_chars + background_chars)
+            total_tokens_budget = _estimate_tokens_from_chars(total_chars_budget)
+            inline_image_mb = max(0.0, cfg.agents.defaults.max_inline_image_bytes / 1024 / 1024)
+
             action_rows = []
             for item in issues[:6]:
                 if item.startswith("default model:"):
@@ -1174,6 +1231,31 @@ def run_webui(
     <h2>{t("Named Endpoints", "命名端点")}</h2>
     <div class="kpi">{len(endpoint_names)}</div>
     <div class="muted">{escape(', '.join(endpoint_names[:6]) or t('none', '未配置'))}</div>
+  </section>
+</div>
+<div class="grid cols-2" style="margin-top:14px">
+  <section class="card">
+    <h2>{t("Resource Radar", "资源雷达")}</h2>
+    <table>
+      <tr><th>{t("CPU load(1m)", "CPU 负载(1m)")}</th><td>{escape(f"{load1:.2f}" if isinstance(load1, float) else "n/a")}</td></tr>
+      <tr><th>{t("Memory used", "内存占用")}</th><td>{escape(f"{mem_used_percent:.1f}%" if isinstance(mem_used_percent, float) else "n/a")}</td></tr>
+      <tr><th>{t("Disk used(/)", "磁盘占用(/)")}</th><td>{escape(f"{disk_used_percent:.1f}%" if isinstance(disk_used_percent, float) else "n/a")}</td></tr>
+    </table>
+    <div class="muted">
+      {t("This is a lightweight runtime snapshot from the current host.", "这是当前主机的轻量运行快照。")}
+    </div>
+  </section>
+  <section class="card">
+    <h2>{t("Token Budget Radar", "Token 预算雷达")}</h2>
+    <table>
+      <tr><th>history</th><td>{history_chars} chars ≈ { _estimate_tokens_from_chars(history_chars) } tokens</td></tr>
+      <tr><th>memory</th><td>{memory_chars} chars ≈ { _estimate_tokens_from_chars(memory_chars) } tokens</td></tr>
+      <tr><th>background</th><td>{background_chars} chars ≈ { _estimate_tokens_from_chars(background_chars) } tokens</td></tr>
+      <tr><th>{t("total context cap", "总上下文预算")}</th><td>{total_chars_budget} chars ≈ {total_tokens_budget} tokens</td></tr>
+      <tr><th>{t("inline image cap", "内联图片上限")}</th><td>{inline_image_mb:.2f} MB</td></tr>
+      <tr><th>{t("gc / cache", "gc / 缓存")}</th><td>gcEveryTurns={cfg.agents.defaults.gc_every_turns}, cache={cfg.agents.defaults.session_cache_max_entries}</td></tr>
+    </table>
+    <div class="muted">{t("Estimation uses ~1 token per 3 chars (mixed text).", "估算按约 1 token ≈ 3 chars（中英混合粗估）。")}</div>
   </section>
 </div>
 <div class="split" style="margin-top:14px">
@@ -1468,7 +1550,7 @@ def run_webui(
       <label>{t("allowFrom storage", "allowFrom 存储方式")}</label>
       <select name="ch_{escape(sid)}_allow_mode">
         <option value="env_placeholders" {"selected" if allow_mode == "env_placeholders" else ""}>{t("env placeholders (recommended)", "环境变量占位（推荐）")}</option>
-        <option value="plain" {"selected" if allow_mode == "plain" else ""}>{t("plain list", "明文列表")}</option>
+        <option value="plain" {"selected" if allow_mode == "plain" else ""}>{t("plain text", "明文")}</option>
       </select>
     </div>
     <div class="field">
