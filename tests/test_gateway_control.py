@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
 
-from nanobot.gateway.control import compute_runtime_config_fingerprint
+from nanobot.gateway.control import (
+    compute_runtime_config_fingerprint,
+    is_gateway_runtime_fresh,
+    read_gateway_runtime_state,
+    write_gateway_runtime_state,
+)
 
 
 def _prepare_home(monkeypatch, tmp_path: Path) -> Path:
@@ -45,3 +51,20 @@ def test_runtime_fingerprint_honors_explicit_env_files(monkeypatch, tmp_path):
     explicit.write_text("X=2\n", encoding="utf-8")
     second = compute_runtime_config_fingerprint(config)
     assert first != second
+
+
+def test_gateway_runtime_state_roundtrip(monkeypatch, tmp_path):
+    root = _prepare_home(monkeypatch, tmp_path)
+    config = root / "config.json"
+    config.write_text("{}", encoding="utf-8")
+    write_gateway_runtime_state(config, fingerprint="abc", status="running", note="ok")
+    state = read_gateway_runtime_state(config)
+    assert isinstance(state, dict)
+    assert state["status"] == "running"
+    assert state["fingerprint"] == "abc"
+
+
+def test_gateway_runtime_state_freshness():
+    assert is_gateway_runtime_fresh({"status": "running", "updatedAt": time.time()}, max_age_seconds=3)
+    assert not is_gateway_runtime_fresh({"status": "stopped", "updatedAt": time.time()}, max_age_seconds=3)
+    assert not is_gateway_runtime_fresh({"status": "running", "updatedAt": time.time() - 100}, max_age_seconds=3)

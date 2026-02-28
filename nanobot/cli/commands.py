@@ -691,7 +691,11 @@ def gateway(
     """Start the nanobot gateway."""
     from loguru import logger
     from nanobot.config.loader import get_config_path, get_data_dir, load_config, load_config_strict
-    from nanobot.gateway.control import compute_runtime_config_fingerprint
+    from nanobot.gateway.control import (
+        compute_runtime_config_fingerprint,
+        get_gateway_runtime_state_path,
+        write_gateway_runtime_state,
+    )
 
     if verbose:
         import logging
@@ -703,7 +707,9 @@ def gateway(
     config_path = get_config_path()
     data_dir = get_data_dir()
     poll_seconds = _gateway_reload_poll_seconds()
+    state_path = get_gateway_runtime_state_path(config_path)
     console.print(f"[green]✓[/green] Hot reload: enabled (poll every {poll_seconds:.1f}s)")
+    console.print(f"[dim]Gateway state file: {state_path}[/dim]")
 
     async def run():
         state: _GatewayRuntimeState | None = None
@@ -718,23 +724,53 @@ def gateway(
             state = await _start_gateway_runtime(config, data_dir=data_dir)
             _print_gateway_runtime_summary(state)
             fingerprint = compute_runtime_config_fingerprint(config_path)
+            state_path = write_gateway_runtime_state(
+                config_path,
+                fingerprint=fingerprint,
+                status="running",
+                note="gateway started",
+            )
             while True:
                 await asyncio.sleep(poll_seconds)
 
                 if state is None:
                     continue
 
+                write_gateway_runtime_state(
+                    config_path,
+                    fingerprint=fingerprint,
+                    status="running",
+                )
+
                 agent_issue = _task_exit_reason(state.agent_task, name="agent loop")
                 if agent_issue:
                     logger.error("Gateway runtime degraded: {}", agent_issue)
                     console.print(f"[yellow]↻[/yellow] Runtime degraded ({agent_issue}), reloading...")
+                    write_gateway_runtime_state(
+                        config_path,
+                        fingerprint=fingerprint,
+                        status="reloading",
+                        note=agent_issue,
+                    )
                     old_config = state.config
                     await _stop_gateway_runtime(state)
                     try:
                         state = await _start_gateway_runtime(old_config, data_dir=data_dir)
                         _print_gateway_runtime_summary(state)
+                        write_gateway_runtime_state(
+                            config_path,
+                            fingerprint=fingerprint,
+                            status="running",
+                            note="runtime recovered",
+                        )
                     except Exception as restart_error:
                         logger.exception("Gateway recovery failed")
+                        write_gateway_runtime_state(
+                            config_path,
+                            fingerprint=fingerprint,
+                            status="error",
+                            note=f"runtime recovery failed: {restart_error}",
+                        )
                         raise RuntimeError(f"gateway runtime recovery failed: {restart_error}") from restart_error
                     continue
 
@@ -754,6 +790,12 @@ def gateway(
                     continue
 
                 console.print("[cyan]↻[/cyan] Detected config/env change, reloading gateway runtime...")
+                write_gateway_runtime_state(
+                    config_path,
+                    fingerprint=fingerprint,
+                    status="reloading",
+                    note="config/env change detected",
+                )
                 old_config = state.config
                 await _stop_gateway_runtime(state)
                 try:
@@ -762,6 +804,12 @@ def gateway(
                     failed_fingerprint = None
                     _print_gateway_runtime_summary(state)
                     console.print("[green]✓[/green] Gateway runtime reloaded")
+                    write_gateway_runtime_state(
+                        config_path,
+                        fingerprint=fingerprint,
+                        status="running",
+                        note="reload succeeded",
+                    )
                 except Exception as e:
                     logger.exception("Gateway reload failed, trying rollback")
                     console.print(f"[red]Reload failed[/red]: {e}")
@@ -771,12 +819,31 @@ def gateway(
                         _print_gateway_runtime_summary(state)
                         fingerprint = compute_runtime_config_fingerprint(config_path)
                         console.print("[green]✓[/green] Rollback succeeded")
+                        write_gateway_runtime_state(
+                            config_path,
+                            fingerprint=fingerprint,
+                            status="running",
+                            note="rollback succeeded",
+                        )
                     except Exception as rollback_error:
                         logger.exception("Gateway rollback failed")
+                        write_gateway_runtime_state(
+                            config_path,
+                            fingerprint=fingerprint,
+                            status="error",
+                            note=f"rollback failed: {rollback_error}",
+                        )
                         raise RuntimeError(f"gateway rollback failed: {rollback_error}") from rollback_error
         except KeyboardInterrupt:
             console.print("\nShutting down...")
         finally:
+            if fingerprint:
+                write_gateway_runtime_state(
+                    config_path,
+                    fingerprint=fingerprint,
+                    status="stopped",
+                    note="gateway stopped",
+                )
             if state is not None:
                 await _stop_gateway_runtime(state)
 

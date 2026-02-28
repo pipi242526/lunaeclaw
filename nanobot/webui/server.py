@@ -85,6 +85,11 @@ from nanobot.webui.diagnostics import (
     collect_config_migration_hints,
     collect_tool_policy_diagnostics as _collect_tool_policy_diagnostics_impl,
 )
+from nanobot.gateway.control import (
+    get_gateway_runtime_state_path as _get_gateway_runtime_state_path,
+    is_gateway_runtime_fresh as _is_gateway_runtime_fresh,
+    read_gateway_runtime_state as _read_gateway_runtime_state,
+)
 
 
 def _collect_channel_runtime_issues(raw_cfg: Config, resolved_cfg: Config) -> list[str]:
@@ -140,6 +145,44 @@ def run_webui(
 
     path_token = _resolve_path_token()
     path_prefix = f"/{path_token}"
+    gateway_state_path = _get_gateway_runtime_state_path(cfg_path)
+
+    def _gateway_runtime_status() -> tuple[bool, str, str]:
+        """
+        Return (ready, reason_en, reason_zh).
+
+        `ready=True` means WebUI and a live gateway share the same runtime dir,
+        so config changes can be auto-applied by hot reload.
+        """
+        state = _read_gateway_runtime_state(cfg_path)
+        if not state:
+            return (
+                False,
+                "no gateway runtime state found in this config directory",
+                "当前配置目录未发现 gateway 运行状态文件",
+            )
+        expected_dir = str(cfg_path.expanduser().resolve().parent)
+        actual_dir = str(state.get("dataDir") or "").strip()
+        if not actual_dir or actual_dir != expected_dir:
+            return (
+                False,
+                "gateway data directory mismatch",
+                "gateway 数据目录不一致",
+            )
+        raw_poll = (os.environ.get("NANOBOT_GATEWAY_RELOAD_POLL_SECONDS") or "2.0").strip()
+        try:
+            poll_seconds = max(0.5, float(raw_poll))
+        except ValueError:
+            poll_seconds = 2.0
+        max_age = max(6.0, poll_seconds * 3.0 + 2.0)
+        if not _is_gateway_runtime_fresh(state, max_age_seconds=max_age):
+            status = str(state.get("status") or "unknown")
+            return (
+                False,
+                f"gateway not alive in this directory (status={status})",
+                f"当前目录内 gateway 未在线（status={status}）",
+            )
+        return (True, "ok", "正常")
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "nanobot-webui/0.1"
@@ -213,6 +256,20 @@ def run_webui(
 
         def _save_config(self, config: Config) -> None:
             save_config(config, cfg_path)
+
+        def _gateway_reload_ready(self) -> tuple[bool, str]:
+            ready, reason_en, reason_zh = _gateway_runtime_status()
+            if ready:
+                return True, ""
+            return False, reason_zh if self._ui_lang == "zh-CN" else reason_en
+
+        def _append_apply_status(self, base_msg_en: str, base_msg_zh: str) -> str:
+            ready, reason = self._gateway_reload_ready()
+            if ready:
+                return base_msg_zh if self._ui_lang == "zh-CN" else base_msg_en
+            if self._ui_lang == "zh-CN":
+                return f"{base_msg_zh}（未自动生效：{reason}）"
+            return f"{base_msg_en} (not auto-applied: {reason})"
 
         def _read_form(self) -> dict[str, list[str]]:
             length = int(self.headers.get("Content-Length") or "0")
@@ -549,7 +606,12 @@ def run_webui(
             )
             channel_issues = _collect_channel_runtime_issues(cfg, cfg_resolved)
             config_hints = collect_config_migration_hints(cfg_path)
+            gateway_runtime_ready, gateway_reason_en, gateway_reason_zh = _gateway_runtime_status()
             issues = [*channel_issues]
+            if not gateway_runtime_ready:
+                issues.append(
+                    f"gateway runtime: {gateway_reason_zh if zh else gateway_reason_en}"
+                )
             if not default_model_ok:
                 issues.append(f"default model: {default_model_reason}")
             for hint in config_hints:
@@ -598,6 +660,10 @@ def run_webui(
                 elif item.startswith("config:"):
                     action_rows.append(
                         f"<li>{escape(item)} · <a class='mono' href='/'>{t('review config migration hints and resave related page', '查看配置迁移提示后到对应页面重存')}</a></li>"
+                    )
+                elif item.startswith("gateway runtime:"):
+                    action_rows.append(
+                        f"<li>{escape(item)} · <a class='mono' href='/'>{t('ensure gateway uses same NANOBOT_DATA_DIR and is running', '确保 gateway 使用相同 NANOBOT_DATA_DIR 并处于运行中')}</a></li>"
                     )
                 else:
                     action_rows.append(
@@ -700,6 +766,8 @@ def run_webui(
       <tr><th>{t("Budget alerts", "预算告警")}</th><td>{len(budget_alerts)}</td></tr>
       <tr><th>{t("Unavailable skills", "不可用技能")}</th><td>{len(unavailable_skills)}</td></tr>
       <tr><th>{t("MCP servers", "MCP 服务数")}</th><td>{len(mcp_servers)} ({len(cfg.tools.mcp_enabled_servers or [])} allowlisted)</td></tr>
+      <tr><th>{t("Gateway runtime", "Gateway 运行状态")}</th><td>{t("alive", "在线") if gateway_runtime_ready else t("not ready", "未就绪")} ({escape(gateway_reason_zh if zh else gateway_reason_en)})</td></tr>
+      <tr><th>{t("Gateway state file", "Gateway 状态文件")}</th><td><code>{escape(str(gateway_state_path))}</code></td></tr>
     </table>
     <div class="muted">{t("For full diagnostics, run", "更详细诊断建议使用")} <code>nanobot doctor</code></div>
   </section>
@@ -883,6 +951,8 @@ def run_webui(
             cfg_resolved = load_config(cfg_path, apply_profiles=False, resolve_env=True)
             zh = self._ui_lang == "zh-CN"
             t = (lambda en, zh_cn: zh_cn if zh else en)
+            gateway_runtime_ready, gateway_reason_en, gateway_reason_zh = _gateway_runtime_status()
+            gateway_runtime_reason = gateway_reason_zh if zh else gateway_reason_en
             channels_json = _pretty_json(cfg.channels.model_dump(by_alias=True))
             channels_dump = cfg.channels.model_dump()
             quick_options: list[str] = []
@@ -1066,7 +1136,12 @@ def run_webui(
       <li>{t("For TG-heavy usage, keep", "主用 TG 时建议保持")} <code>sendToolHints=false</code></li>
       <li>{t("allowFrom supports both plain IDs and env placeholders; team sharing usually prefers env placeholders.", "allowFrom 同时支持明文和环境变量占位；团队共享配置通常建议用 env 占位。")}</li>
     </ul>
-    <div class="muted">{t("Gateway auto-reloads after config/env changes (usually within a few seconds).", "Gateway 会在配置/环境变更后自动热重载（通常几秒内生效）。")}</div>
+    <div class="muted">
+      {t("Gateway auto-reload", "Gateway 自动热重载")}:
+      {'OK' if gateway_runtime_ready else t("not ready", "未就绪")}
+      ({escape(gateway_runtime_reason)})
+    </div>
+    <div class="muted">{t("Auto-apply is guaranteed only when WebUI and gateway share the same NANOBOT_DATA_DIR and gateway is alive.", "仅当 WebUI 与 gateway 使用同一个 NANOBOT_DATA_DIR 且 gateway 在线时，才能保证自动生效。")}</div>
   </section>
 </div>
 <form method="post" class="card" style="margin-top:14px">
@@ -1541,7 +1616,7 @@ def run_webui(
                 self._save_config(cfg)
                 self._redirect(
                     "/endpoints",
-                    msg=t(
+                    msg=self._append_apply_status(
                         f"Default model saved (check passed: {reason}). Gateway will auto-reload shortly.",
                         f"默认模型已保存（检测通过: {reason}）。Gateway 将自动热重载生效。",
                     ),
@@ -1557,7 +1632,7 @@ def run_webui(
                 self._save_config(cfg)
                 self._redirect(
                     "/endpoints",
-                    msg=t(
+                    msg=self._append_apply_status(
                         "Language/search policy saved. Gateway will auto-reload shortly.",
                         "语言与搜索策略已保存。Gateway 将自动热重载生效。",
                     ),
@@ -1612,7 +1687,7 @@ def run_webui(
                 self._save_config(cfg)
                 self._redirect(
                     "/endpoints",
-                    msg=t(
+                    msg=self._append_apply_status(
                         "Runtime budget settings saved. Gateway will auto-reload shortly.",
                         "资源策略已保存。Gateway 将自动热重载生效。",
                     ),
@@ -1629,7 +1704,7 @@ def run_webui(
                     self._save_config(cfg)
                     self._redirect(
                         "/endpoints",
-                        msg=t(
+                        msg=self._append_apply_status(
                             f"Deleted endpoint: {name}. Gateway will auto-reload shortly.",
                             f"已删除端点: {name}。Gateway 将自动热重载生效。",
                         ),
@@ -1672,7 +1747,7 @@ def run_webui(
             self._save_config(cfg)
             self._redirect(
                 "/endpoints",
-                msg=t(
+                msg=self._append_apply_status(
                     f"Endpoint saved: {name}. Gateway will auto-reload shortly.",
                     f"端点已保存: {name}。Gateway 将自动热重载生效。",
                 ),
@@ -1725,11 +1800,9 @@ def run_webui(
                 self._save_config(cfg)
                 self._redirect(
                     "/channels",
-                    msg=(
-                        t(
-                            f"Channel `{selected_channel}` saved (gateway auto-reloads if token/secret changed).",
-                            f"渠道 `{selected_channel}` 配置已保存（如改 token/secret，Gateway 将自动热重载）。",
-                        )
+                    msg=self._append_apply_status(
+                        f"Channel `{selected_channel}` saved (gateway auto-reloads if token/secret changed).",
+                        f"渠道 `{selected_channel}` 配置已保存（如改 token/secret，Gateway 将自动热重载）。",
                     ),
                 )
                 return
@@ -1741,7 +1814,7 @@ def run_webui(
                 self._save_config(cfg)
                 self._redirect(
                     "/channels",
-                    msg=t(
+                    msg=self._append_apply_status(
                         "Channels JSON saved (gateway auto-reloads if token/secret changed).",
                         "Channels 配置已保存（如改了 token/secret，Gateway 将自动热重载）。",
                     ),
@@ -2014,6 +2087,13 @@ def run_webui(
     print(f"Web UI access path (required): {path_prefix}/")
     print(f"Open Web UI at: {access_url}")
     print(f"Path token file: {token_path}")
+    print(f"Gateway state file: {gateway_state_path}")
+    _ready, _reason_en, _reason_zh = _gateway_runtime_status()
+    if _ready:
+        print("Gateway runtime check: OK (same data dir, alive)")
+    else:
+        print(f"Gateway runtime check: NOT READY ({_reason_en})")
+        print("Tip: start gateway with the same NANOBOT_DATA_DIR/config directory.")
     if host not in {"127.0.0.1", "localhost"}:
         print("Warning: Web UI is not bound to localhost. Keep the path token secret and prefer a trusted network/reverse proxy.")
     if open_browser:

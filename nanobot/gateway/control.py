@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from pathlib import Path
+import time
 
 
 def discover_runtime_env_files() -> list[Path]:
@@ -57,3 +59,60 @@ def compute_runtime_config_fingerprint(config_path: Path) -> str:
         hasher.update(b"\0")
     return hasher.hexdigest()
 
+
+def get_gateway_runtime_state_path(config_path: Path) -> Path:
+    """Return runtime state file path colocated with config."""
+    root = config_path.expanduser().resolve().parent / "runtime"
+    root.mkdir(parents=True, exist_ok=True)
+    return root / "gateway.state.json"
+
+
+def write_gateway_runtime_state(
+    config_path: Path,
+    *,
+    fingerprint: str,
+    status: str,
+    note: str = "",
+) -> Path:
+    """Persist gateway runtime state atomically for cross-process coordination."""
+    state_path = get_gateway_runtime_state_path(config_path)
+    payload = {
+        "status": status,
+        "fingerprint": str(fingerprint or ""),
+        "note": str(note or ""),
+        "pid": os.getpid(),
+        "configPath": str(config_path.expanduser().resolve()),
+        "dataDir": str(config_path.expanduser().resolve().parent),
+        "updatedAt": time.time(),
+    }
+    tmp_path = state_path.with_name(f".{state_path.name}.tmp")
+    tmp_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp_path, state_path)
+    return state_path
+
+
+def read_gateway_runtime_state(config_path: Path) -> dict | None:
+    """Read gateway runtime state. Returns None when unavailable/invalid."""
+    state_path = get_gateway_runtime_state_path(config_path)
+    if not state_path.exists():
+        return None
+    try:
+        data = json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    return data
+
+
+def is_gateway_runtime_fresh(state: dict | None, *, max_age_seconds: float = 12.0) -> bool:
+    """Return True when runtime state indicates a recently alive gateway."""
+    if not isinstance(state, dict):
+        return False
+    if str(state.get("status") or "").lower() != "running":
+        return False
+    try:
+        updated_at = float(state.get("updatedAt"))
+    except Exception:
+        return False
+    return (time.time() - updated_at) <= max(1.0, float(max_age_seconds))
