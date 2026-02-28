@@ -78,9 +78,7 @@ from nanobot.webui.i18n import (
 )
 from nanobot.webui.routes import dispatch_get_route as _dispatch_get_route
 from nanobot.webui.services import (
-    restart_gateway_runtime as _restart_gateway_runtime,
     safe_positive_int as _safe_positive_int,
-    short_text as _short_text,
 )
 from nanobot.webui.diagnostics import (
     collect_channel_runtime_issues as _collect_channel_runtime_issues_impl,
@@ -1068,13 +1066,7 @@ def run_webui(
       <li>{t("For TG-heavy usage, keep", "主用 TG 时建议保持")} <code>sendToolHints=false</code></li>
       <li>{t("allowFrom supports both plain IDs and env placeholders; team sharing usually prefers env placeholders.", "allowFrom 同时支持明文和环境变量占位；团队共享配置通常建议用 env 占位。")}</li>
     </ul>
-    <div class="muted">{t("Restart gateway after changing channel token/secret.", "修改渠道 token/secret 后通常需要重启 gateway。")}</div>
-    <form method="post" style="margin-top:10px">
-      <input type="hidden" name="action" value="restart_gateway">
-      <button class="btn warn icon-btn" type="submit" onclick="return confirm('{t('Restart gateway now?', '立即重启 gateway 吗？')}');">
-        <span aria-hidden="true">⟳</span>{t("Restart Gateway", "重启 Gateway")}
-      </button>
-    </form>
+    <div class="muted">{t("After changing channel token/secret, restart gateway manually in your deployment environment.", "修改渠道 token/secret 后，请在你的部署环境里手动重启 gateway。")}</div>
   </section>
 </div>
 <form method="post" class="card" style="margin-top:14px">
@@ -1691,16 +1683,6 @@ def run_webui(
             action = self._form_str(form, "action")
             zh = self._ui_lang == "zh-CN"
             t = (lambda en, zh_cn: zh_cn if zh else en)
-            if action == "restart_gateway":
-                ok, detail = _restart_gateway_runtime()
-                if ok:
-                    self._redirect("/channels", msg=t("Gateway restart request sent.", "Gateway 重启请求已发送。"))
-                else:
-                    self._redirect(
-                        "/channels",
-                        err=t("Gateway restart failed", "Gateway 重启失败") + f": {_short_text(detail)}",
-                    )
-                return
             if action == "save_channels_quick":
                 selected_channel = self._form_str(form, "quick_channel_id", "").strip().lower()
                 selected_specs = [s for s in _CHANNEL_QUICK_SPECS if str(s["id"]).lower() == selected_channel]
