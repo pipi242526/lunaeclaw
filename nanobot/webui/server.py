@@ -6,7 +6,10 @@ import json
 import os
 import re
 import secrets
+import shlex
+import shutil
 import socket
+import subprocess
 import threading
 import urllib.error
 import urllib.request
@@ -85,6 +88,11 @@ _REPLY_LANGUAGE_OPTIONS = [
 
 _MAX_SKILL_IMPORT_BYTES = 512 * 1024
 _MAX_REMOTE_JSON_BYTES = 1024 * 1024
+_MEDIA_PAGE_SIZE = 50
+_UI_LANGUAGE_CHOICES: list[tuple[str, str]] = [
+    ("en", "English"),
+    ("zh-CN", "简体中文"),
+]
 
 _CHANNEL_QUICK_SPECS: list[dict[str, Any]] = [
     {
@@ -327,6 +335,102 @@ def _collect_tool_policy_diagnostics(cfg: Config) -> list[str]:
 def _normalize_ui_lang(value: str | None) -> str:
     lang = (value or "en").strip().lower()
     return "zh-CN" if lang in {"zh", "zh-cn", "cn"} else "en"
+
+
+def _safe_positive_int(raw: str | None, *, default: int = 1, minimum: int = 1) -> int:
+    try:
+        value = int((raw or "").strip())
+    except Exception:
+        return default
+    return value if value >= minimum else default
+
+
+def _short_text(raw: str, *, limit: int = 180) -> str:
+    text = re.sub(r"\s+", " ", (raw or "").strip())
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."
+
+
+def _detect_compose_dirs() -> list[Path]:
+    candidates: list[Path] = []
+    from_env = (os.getenv("NANOBOT_WEBUI_COMPOSE_DIR") or "").strip()
+    if from_env:
+        candidates.append(Path(from_env).expanduser())
+    candidates.extend([Path.cwd(), Path("/root/nanobot-s"), Path("/app")])
+    out: list[Path] = []
+    compose_files = ("docker-compose.yml", "compose.yml", "compose.yaml")
+    for path in candidates:
+        p = path.resolve()
+        if p in out:
+            continue
+        if any((p / name).exists() for name in compose_files):
+            out.append(p)
+    return out
+
+
+def _run_cmd(
+    cmd: list[str],
+    *,
+    cwd: Path | None = None,
+    timeout: int = 30,
+) -> tuple[bool, str]:
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(cwd) if cwd else None,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except FileNotFoundError:
+        return False, f"command not found: {cmd[0]}"
+    except subprocess.TimeoutExpired:
+        return False, f"timeout after {timeout}s: {' '.join(cmd)}"
+    output = "\n".join(x for x in [proc.stdout.strip(), proc.stderr.strip()] if x).strip()
+    if proc.returncode == 0:
+        return True, output or "ok"
+    return False, output or f"exit code {proc.returncode}"
+
+
+def _restart_gateway_runtime() -> tuple[bool, str]:
+    override = (os.getenv("NANOBOT_WEBUI_RESTART_GATEWAY_CMD") or "").strip()
+    if override:
+        cmd = shlex.split(override)
+        if not cmd:
+            return False, "NANOBOT_WEBUI_RESTART_GATEWAY_CMD is empty after parsing"
+        ok, output = _run_cmd(cmd, timeout=45)
+        if ok:
+            return True, f"restart command ok: {' '.join(cmd)}"
+        return False, f"restart command failed: {output}"
+
+    candidates: list[tuple[list[str], Path | None]] = []
+    compose_dirs = _detect_compose_dirs()
+    if shutil.which("docker"):
+        for compose_dir in compose_dirs:
+            candidates.append((["docker", "compose", "restart", "nanobot-gateway"], compose_dir))
+        container_name = (os.getenv("NANOBOT_GATEWAY_CONTAINER") or "").strip() or "nanobot-gateway"
+        for name in {container_name, "nanobot-gateway"}:
+            candidates.append((["docker", "restart", name], None))
+    if shutil.which("docker-compose"):
+        for compose_dir in compose_dirs:
+            candidates.append((["docker-compose", "restart", "nanobot-gateway"], compose_dir))
+
+    if not candidates:
+        return False, (
+            "No restart backend detected. Set NANOBOT_WEBUI_RESTART_GATEWAY_CMD "
+            "or install docker/docker-compose CLI."
+        )
+
+    errors: list[str] = []
+    for cmd, cwd in candidates:
+        ok, output = _run_cmd(cmd, cwd=cwd, timeout=45)
+        if ok:
+            suffix = f" (cwd={cwd})" if cwd else ""
+            return True, f"{' '.join(cmd)}{suffix}"
+        errors.append(f"{' '.join(cmd)} => {_short_text(output)}")
+    return False, " ; ".join(errors[:3])
 
 
 def _mask_sensitive_url(url: str) -> str:
@@ -635,7 +739,14 @@ def run_webui(
                 elif route_path == "/skills":
                     self._render_skills(msg=msg, err=err)
                 elif route_path == "/media":
-                    self._render_media(msg=msg, err=err)
+                    media_page = _safe_positive_int((params.get("media_page") or ["1"])[0], default=1)
+                    exports_page = _safe_positive_int((params.get("exports_page") or ["1"])[0], default=1)
+                    self._render_media(
+                        msg=msg,
+                        err=err,
+                        media_page=media_page,
+                        exports_page=exports_page,
+                    )
                 else:
                     self._send_html(404, self._page(_ui_text(self._ui_lang, "not_found"), "<p>Not Found</p>", tab=""))
             except Exception as e:  # keep UI resilient
@@ -747,7 +858,8 @@ def run_webui(
             params["lang"] = _normalize_ui_lang(ui_lang or self._ui_lang)
             url = f"{path_prefix}{path}" if path_prefix and path.startswith("/") else path
             if params:
-                url = f"{url}?{urlencode(params)}"
+                sep = "&" if "?" in url else "?"
+                url = f"{url}{sep}{urlencode(params)}"
             self.send_response(303)
             self.send_header("Location", url)
             self.end_headers()
@@ -776,6 +888,10 @@ def run_webui(
             external_host = "127.0.0.1" if host == "0.0.0.0" else host
             full_access_url = f"http://{external_host}:{port}{path_prefix}/"
             lang_label = _ui_text(self._ui_lang, "ui_lang")
+            lang_options_html = "".join(
+                f'<option value="{escape(code)}" {"selected" if self._ui_lang == code else ""}>{escape(label)}</option>'
+                for code, label in _UI_LANGUAGE_CHOICES
+            )
             subtitle = (
                 f"Lightweight config console (Host: {escape(host)}:{port}) · Path-token protected"
                 if self._ui_lang == "en"
@@ -859,9 +975,24 @@ def run_webui(
       border:1px solid var(--line); background:#fff; color: var(--ink); border-radius: 10px;
       padding:8px 12px; cursor:pointer; font-weight:600;
     }}
+    .icon-btn {{ display:inline-flex; align-items:center; gap:6px; }}
     .btn.primary {{ background: var(--accent); color: #fff; border-color: var(--accent); }}
     .btn.warn {{ background: var(--accent-2); color: #fff; border-color: var(--accent-2); }}
     .btn.subtle {{ background: rgba(255,255,255,.55); }}
+    .lang-switch {{
+      display:inline-flex; align-items:center; gap:8px; border:1px solid var(--line);
+      border-radius:10px; padding:6px 8px; background:rgba(255,255,255,.55);
+    }}
+    .lang-icon-btn {{
+      width:28px; height:28px; display:inline-flex; align-items:center; justify-content:center;
+      border:1px solid var(--line); border-radius:8px; background:#fff;
+      font-size:14px; line-height:1;
+    }}
+    .lang-select {{
+      border:none; background:transparent; padding:0 2px; min-width:120px;
+      font: inherit; color: var(--ink);
+    }}
+    .lang-select:focus {{ outline:none; }}
     table {{ width:100%; border-collapse: collapse; font-size: 13px; }}
     th, td {{ border-bottom:1px solid #ece7dc; text-align:left; vertical-align: top; padding:8px 6px; }}
     th {{ color: var(--muted); font-weight:600; }}
@@ -900,8 +1031,12 @@ def run_webui(
       <div style="display:grid; gap:8px;">
         <div class="row" style="justify-content:flex-end">
           <span class="muted">{lang_label}</span>
-          <a class="btn subtle" href="{self._url_with_lang(tab or '/').replace('lang='+self._ui_lang, 'lang=en')}">EN</a>
-          <a class="btn subtle" href="{self._url_with_lang(tab or '/').replace('lang='+self._ui_lang, 'lang=zh-CN')}">中文</a>
+          <div class="lang-switch" title="{lang_label}">
+            <span class="lang-icon-btn" aria-hidden="true">🌐</span>
+            <select id="nb-lang-picker" class="lang-select" aria-label="{lang_label}">
+              {lang_options_html}
+            </select>
+          </div>
         </div>
         <nav class="nav">{self._nav(tab)}</nav>
       </div>
@@ -929,6 +1064,21 @@ def run_webui(
         window.__nbToastTimer = window.setTimeout(() => toast.classList.remove('show'), 1200);
       }}
     }}
+    function nbSelectAll(form, checked) {{
+      if (!form) return;
+      for (const box of form.querySelectorAll('input[name=\"selected_name\"]')) {{
+        box.checked = !!checked;
+      }}
+    }}
+    (function bindLangPicker() {{
+      const picker = document.getElementById('nb-lang-picker');
+      if (!picker) return;
+      picker.addEventListener('change', () => {{
+        const u = new URL(window.location.href);
+        u.searchParams.set('lang', picker.value);
+        window.location.href = u.pathname + u.search;
+      }});
+    }})();
     (function bindUiLang() {{
       const uiLang = "{escape(self._ui_lang)}";
       for (const form of document.querySelectorAll('form')) {{
@@ -1105,9 +1255,10 @@ def run_webui(
       {''.join(action_rows) or f"<li>{t('No blocking issue found.', '未发现阻塞问题。')}</li>"}
     </ul>
     <div class="row" style="margin-top:10px">
-      <a class="btn subtle" href="/channels">{t("Manage Channels", "管理聊天渠道")}</a>
-      <a class="btn subtle" href="/endpoints">{t("Manage Models", "管理模型端点")}</a>
-      <a class="btn subtle" href="/mcp">{t("Manage MCP", "管理 MCP")}</a>
+      <a class="btn subtle icon-btn" href="/channels"><span aria-hidden="true">💬</span>{t("Manage Channels", "管理聊天渠道")}</a>
+      <a class="btn subtle icon-btn" href="/endpoints"><span aria-hidden="true">🧠</span>{t("Manage Models", "管理模型端点")}</a>
+      <a class="btn subtle icon-btn" href="/mcp"><span aria-hidden="true">🧩</span>{t("Manage MCP", "管理 MCP")}</a>
+      <a class="btn subtle icon-btn" href="/media"><span aria-hidden="true">🗂</span>{t("Manage Media", "管理媒体文件")}</a>
     </div>
   </section>
   <section class="card">
@@ -1134,6 +1285,8 @@ def run_webui(
 
         def _render_endpoints(self, *, msg: str = "", err: str = "") -> None:
             cfg = self._load_config()
+            zh = self._ui_lang == "zh-CN"
+            t = (lambda en, zh_cn: zh_cn if zh else en)
             cards = []
             switch_rows: list[str] = []
             for name in sorted(cfg.providers.endpoints.keys()):
@@ -1146,15 +1299,15 @@ def run_webui(
                         switch_rows.append(
                             f'<tr><td><code>{escape(name)}</code></td><td><code>{escape(model_name)}</code></td>'
                             f'<td><code>{escape(cmd)}</code></td>'
-                            f'<td><button type="button" class="btn" data-copy="{escape(cmd)}" onclick="nbCopy(this.dataset.copy)">复制</button></td></tr>'
+                            f'<td><button type="button" class="btn icon-btn" data-copy="{escape(cmd)}" onclick="nbCopy(this.dataset.copy)"><span aria-hidden="true">📋</span>{t("Copy", "复制")}</button></td></tr>'
                         )
                 else:
                     hint = f"{name}/<model-name>"
                     cmd = f"/model {hint}"
                     switch_rows.append(
-                        f'<tr><td><code>{escape(name)}</code></td><td class="muted">（未限制）</td>'
+                        f'<tr><td><code>{escape(name)}</code></td><td class="muted">{t("(unrestricted)", "（未限制）")}</td>'
                         f'<td><code>{escape(cmd)}</code></td>'
-                        f'<td><button type="button" class="btn" data-copy="{escape(cmd)}" onclick="nbCopy(this.dataset.copy)">复制</button></td></tr>'
+                        f'<td><button type="button" class="btn icon-btn" data-copy="{escape(cmd)}" onclick="nbCopy(this.dataset.copy)"><span aria-hidden="true">📋</span>{t("Copy", "复制")}</button></td></tr>'
                     )
                 options = "".join(
                     f'<option value="{t}" {"selected" if ep.type == t else ""}>{t}</option>' for t in _ENDPOINT_TYPES
@@ -1166,18 +1319,18 @@ def run_webui(
   <div class="endpoint-head">
     <h3><code>{escape(name)}</code></h3>
     <div class="row">
-      <button class="btn primary" type="submit" name="action" value="save_endpoint">保存</button>
-      <button class="btn" type="submit" formaction="/endpoints" name="action" value="delete_endpoint" onclick="return confirm('删除端点 {escape(name)} ?');">删除</button>
+      <button class="btn primary icon-btn" type="submit" name="action" value="save_endpoint"><span aria-hidden="true">💾</span>{t("Save", "保存")}</button>
+      <button class="btn icon-btn" type="submit" formaction="/endpoints" name="action" value="delete_endpoint" onclick="return confirm('{t('Delete endpoint', '删除端点')} {escape(name)} ?');"><span aria-hidden="true">🗑</span>{t("Delete", "删除")}</button>
     </div>
   </div>
   <div class="endpoint-fields">
-    <div class="field"><label>名字（用于 /model endpoint/model）</label><input type="text" name="name" value="{escape(name)}"></div>
-    <div class="field"><label>类型（协议/路由）</label><select name="type">{options}</select></div>
-    <div class="field"><label>API Base（可用 ${'{'}ENV{'}'} 占位）</label><input type="text" name="api_base" value="{escape(ep.api_base or '')}"></div>
-    <div class="field"><label>API Key（建议使用 env 占位）</label><input type="text" name="api_key" value="{escape(ep.api_key or '')}"></div>
-    <div class="field full"><label>Models（逗号分隔；空=不限）</label><input type="text" name="models_csv" value="{escape(models_csv)}"></div>
+    <div class="field"><label>{t("Name (used by /model endpoint/model)", "名字（用于 /model endpoint/model）")}</label><input type="text" name="name" value="{escape(name)}"></div>
+    <div class="field"><label>{t("Type (protocol/router)", "类型（协议/路由）")}</label><select name="type">{options}</select></div>
+    <div class="field"><label>{t("API Base (supports ${ENV})", "API Base（可用 ${ENV} 占位）")}</label><input type="text" name="api_base" value="{escape(ep.api_base or '')}"></div>
+    <div class="field"><label>{t("API Key (env placeholder recommended)", "API Key（建议使用 env 占位）")}</label><input type="text" name="api_key" value="{escape(ep.api_key or '')}"></div>
+    <div class="field full"><label>{t("Models (CSV; empty = unrestricted)", "Models（逗号分隔；空=不限）")}</label><input type="text" name="models_csv" value="{escape(models_csv)}"></div>
     <div class="field full"><label>Extra Headers JSON</label><textarea name="extra_headers_json">{escape(headers_json)}</textarea></div>
-    <div class="field"><label><input type="checkbox" name="enabled" {"checked" if ep.enabled else ""}> 启用该端点</label></div>
+    <div class="field"><label><input type="checkbox" name="enabled" {"checked" if ep.enabled else ""}> {t("Enable this endpoint", "启用该端点")}</label></div>
   </div>
 </form>
 """
@@ -1185,19 +1338,19 @@ def run_webui(
             options = "".join(f'<option value="{t}">{t}</option>' for t in _ENDPOINT_TYPES)
             add_form = f"""
 <form method="post" class="card">
-  <h2>新增端点</h2>
+  <h2>{t("Add Endpoint", "新增端点")}</h2>
   <input type="hidden" name="action" value="save_endpoint">
   <div class="endpoint-fields">
-    <div class="field"><label>名字</label><input type="text" name="name" placeholder="myopen"></div>
-    <div class="field"><label>类型</label><select name="type">{options}</select></div>
+    <div class="field"><label>{t("Name", "名字")}</label><input type="text" name="name" placeholder="myopen"></div>
+    <div class="field"><label>{t("Type", "类型")}</label><select name="type">{options}</select></div>
     <div class="field"><label>API Base</label><input type="text" name="api_base" placeholder="${'{'}MYOPEN_BASE{'}'}"></div>
     <div class="field"><label>API Key</label><input type="text" name="api_key" placeholder="${'{'}MYOPEN_KEY{'}'}"></div>
-    <div class="field full"><label>Models（逗号分隔）</label><input type="text" name="models_csv" placeholder="qwen-max, deepseek-v3"></div>
+    <div class="field full"><label>{t("Models (CSV)", "Models（逗号分隔）")}</label><input type="text" name="models_csv" placeholder="qwen-max, deepseek-v3"></div>
     <div class="field full"><label>Extra Headers JSON</label><textarea name="extra_headers_json">{{}}</textarea></div>
-    <div class="field"><label><input type="checkbox" name="enabled" checked> 启用</label></div>
+    <div class="field"><label><input type="checkbox" name="enabled" checked> {t("Enabled", "启用")}</label></div>
   </div>
   <div class="row">
-    <button class="btn primary" type="submit">新增端点</button>
+    <button class="btn primary icon-btn" type="submit"><span aria-hidden="true">➕</span>{t("Create Endpoint", "新增端点")}</button>
   </div>
 </form>
 """
@@ -1227,76 +1380,79 @@ def run_webui(
 
             helper = f"""
 <section class="card">
-  <h2>{"Default Model" if self._ui_lang == "en" else "默认模型"}</h2>
+  <h2>{t("Default Model", "默认模型")}</h2>
   <form method="post" class="row">
     <input type="hidden" name="action" value="set_default_model">
     <select name="default_model_select" style="min-width:380px; flex:1">
       {default_model_options}
     </select>
-    <input type="text" name="default_model_custom" style="flex:1" placeholder="custom endpoint/model (optional)">
-    <button class="btn primary" type="submit">{"Save Default Model" if self._ui_lang == "en" else "保存默认模型"}</button>
+    <input type="text" name="default_model_custom" style="flex:1" placeholder="{t('custom endpoint/model (optional)', '自定义 endpoint/model（可选）')}">
+    <button class="btn primary icon-btn" type="submit"><span aria-hidden="true">💾</span>{t("Save Default Model", "保存默认模型")}</button>
   </form>
-  <div class="muted">{"Save action validates endpoint/model availability once before writing config." if self._ui_lang == "en" else "保存时会先做一次 endpoint/model 可用性检测，再写入配置。聊天里仍可用 /model 会话级切换。"}</div>
+  <div class="muted">{t("Save action validates endpoint/model availability once before writing config.", "保存时会先做一次 endpoint/model 可用性检测，再写入配置。聊天里仍可用 /model 会话级切换。")}</div>
 </section>
 <section class="card" style="margin-top:14px">
-  <h2>语言与搜索策略</h2>
+  <h2>{t("Language & Search Policy", "语言与搜索策略")}</h2>
   <form method="post">
     <input type="hidden" name="action" value="set_agent_preferences">
     <div class="endpoint-fields">
       <div class="field">
-        <label>默认回复语言（最终回复）</label>
+        <label>{t("Default reply language (final answer)", "默认回复语言（最终回复）")}</label>
         <select name="reply_language">
           {reply_lang_options_html}
         </select>
       </div>
       <div class="field">
-        <label>自动检测失败时的回退语言</label>
+        <label>{t("Fallback language when auto-detect fails", "自动检测失败时的回退语言")}</label>
         <select name="auto_reply_fallback_language">
           {fallback_lang_options_html}
         </select>
       </div>
       <div class="field">
-        <label><input type="checkbox" name="cross_lingual_search" {"checked" if cfg.agents.defaults.cross_lingual_search else ""}> 启用跨语言搜索提示（地区话题优先本地语言检索）</label>
-        <div class="muted">例如中文问日本话题时，先用日语检索，再用中文总结。</div>
+        <label><input type="checkbox" name="cross_lingual_search" {"checked" if cfg.agents.defaults.cross_lingual_search else ""}> {t("Enable cross-lingual search hints (region topics prioritize local-language retrieval)", "启用跨语言搜索提示（地区话题优先本地语言检索）")}</label>
+        <div class="muted">{t("Example: for a Japan topic asked in Chinese, search Japanese first and summarize in Chinese.", "例如中文问日本话题时，先用日语检索，再用中文总结。")}</div>
       </div>
     </div>
     <div class="row">
-      <button class="btn primary" type="submit">保存语言/搜索策略</button>
+      <button class="btn primary icon-btn" type="submit"><span aria-hidden="true">💾</span>{t("Save Language/Search Policy", "保存语言/搜索策略")}</button>
     </div>
   </form>
-  <div class="muted">这些设置会影响新请求的回复语言约束与搜索策略提示，不需要聊天命令。</div>
+  <div class="muted">{t("These settings affect reply-language constraints and search strategy hints for new requests; no chat command needed.", "这些设置会影响新请求的回复语言约束与搜索策略提示，不需要聊天命令。")}</div>
 </section>
 <section class="card" style="margin-top:14px">
-  <h2>资源与上下文预算</h2>
+  <h2>{t("Runtime & Context Budgets", "资源与上下文预算")}</h2>
   <form method="post">
     <input type="hidden" name="action" value="set_agent_runtime_budget">
     <div class="endpoint-fields">
-      <div class="field"><label>history 字符预算（maxHistoryChars）</label><input type="number" min="0" name="max_history_chars" value="{cfg.agents.defaults.max_history_chars}"></div>
-      <div class="field"><label>MEMORY 字符预算（maxMemoryContextChars）</label><input type="number" min="0" name="max_memory_context_chars" value="{cfg.agents.defaults.max_memory_context_chars}"></div>
-      <div class="field"><label>背景字符预算（maxBackgroundContextChars）</label><input type="number" min="0" name="max_background_context_chars" value="{cfg.agents.defaults.max_background_context_chars}"></div>
-      <div class="field"><label>内联图片大小上限（maxInlineImageBytes）</label><input type="number" min="0" name="max_inline_image_bytes" value="{cfg.agents.defaults.max_inline_image_bytes}"></div>
-      <div class="field"><label><input type="checkbox" name="auto_compact_background" {"checked" if cfg.agents.defaults.auto_compact_background else ""}> 自动压缩背景信息（优先结构化压缩，再截断）</label></div>
-      <div class="field"><label>系统提示缓存秒数（systemPromptCacheTtlSeconds）</label><input type="number" min="0" name="system_prompt_cache_ttl_seconds" value="{cfg.agents.defaults.system_prompt_cache_ttl_seconds}"></div>
-      <div class="field"><label>会话缓存上限（sessionCacheMaxEntries）</label><input type="number" min="1" name="session_cache_max_entries" value="{cfg.agents.defaults.session_cache_max_entries}"></div>
-      <div class="field"><label>GC 间隔轮次（gcEveryTurns，0=关闭）</label><input type="number" min="0" name="gc_every_turns" value="{cfg.agents.defaults.gc_every_turns}"></div>
+      <div class="field"><label>{t("history char budget (maxHistoryChars)", "history 字符预算（maxHistoryChars）")}</label><input type="number" min="0" name="max_history_chars" value="{cfg.agents.defaults.max_history_chars}"></div>
+      <div class="field"><label>{t("memory char budget (maxMemoryContextChars)", "MEMORY 字符预算（maxMemoryContextChars）")}</label><input type="number" min="0" name="max_memory_context_chars" value="{cfg.agents.defaults.max_memory_context_chars}"></div>
+      <div class="field"><label>{t("background char budget (maxBackgroundContextChars)", "背景字符预算（maxBackgroundContextChars）")}</label><input type="number" min="0" name="max_background_context_chars" value="{cfg.agents.defaults.max_background_context_chars}"></div>
+      <div class="field"><label>{t("inline image size cap (maxInlineImageBytes)", "内联图片大小上限（maxInlineImageBytes）")}</label><input type="number" min="0" name="max_inline_image_bytes" value="{cfg.agents.defaults.max_inline_image_bytes}"></div>
+      <div class="field"><label><input type="checkbox" name="auto_compact_background" {"checked" if cfg.agents.defaults.auto_compact_background else ""}> {t("Auto-compact background (structured first, truncate later)", "自动压缩背景信息（优先结构化压缩，再截断）")}</label></div>
+      <div class="field"><label>{t("system prompt cache TTL (systemPromptCacheTtlSeconds)", "系统提示缓存秒数（systemPromptCacheTtlSeconds）")}</label><input type="number" min="0" name="system_prompt_cache_ttl_seconds" value="{cfg.agents.defaults.system_prompt_cache_ttl_seconds}"></div>
+      <div class="field"><label>{t("session cache cap (sessionCacheMaxEntries)", "会话缓存上限（sessionCacheMaxEntries）")}</label><input type="number" min="1" name="session_cache_max_entries" value="{cfg.agents.defaults.session_cache_max_entries}"></div>
+      <div class="field"><label>{t("GC interval in turns (gcEveryTurns, 0=off)", "GC 间隔轮次（gcEveryTurns，0=关闭）")}</label><input type="number" min="0" name="gc_every_turns" value="{cfg.agents.defaults.gc_every_turns}"></div>
     </div>
     <div class="row">
-      <button class="btn primary" type="submit">保存资源策略</button>
+      <button class="btn primary icon-btn" type="submit"><span aria-hidden="true">💾</span>{t("Save Runtime Budget", "保存资源策略")}</button>
     </div>
   </form>
-  <div class="muted">建议先小步调整并观察响应质量与资源占用，再继续收紧预算。</div>
+  <div class="muted">{t("Adjust in small steps and observe response quality/resource usage before tightening further.", "建议先小步调整并观察响应质量与资源占用，再继续收紧预算。")}</div>
 </section>
 <section class="card" style="margin-top:14px">
-  <h2>聊天内快捷切换命令</h2>
+  <h2>{t("In-chat quick switch commands", "聊天内快捷切换命令")}</h2>
   <table>
-    <tr><th>Endpoint</th><th>Model</th><th>/model 命令</th><th></th></tr>
-    {''.join(switch_rows) or '<tr><td colspan="4" class="muted">先新增 endpoint；配置 models 后这里会生成快捷命令。</td></tr>'}
+    <tr><th>Endpoint</th><th>Model</th><th>/model {t("command", "命令")}</th><th></th></tr>
+    {''.join(switch_rows) or f'<tr><td colspan="4" class="muted">{t("Add an endpoint first; this table generates quick commands after models are configured.", "先新增 endpoint；配置 models 后这里会生成快捷命令。")}</td></tr>'}
   </table>
-  <div class="muted">这些命令可直接发给机器人会话（TG/Discord/其他渠道）进行会话级模型切换。</div>
+  <div class="muted">{t("These commands can be sent directly in chat (TG/Discord/etc.) for session-level model switching.", "这些命令可直接发给机器人会话（TG/Discord/其他渠道）进行会话级模型切换。")}</div>
 </section>
 """
-            body = f'<div class="grid">{helper}{add_form}{"".join(cards) or "<section class=\"card\"><div class=\"muted\">还没有命名端点。先新增一个即可。</div></section>"}</div>'
-            self._send_html(200, self._page("Models & APIs", body, tab="/endpoints", msg=msg, err=err))
+            empty_endpoints_html = (
+                f'<section class="card"><div class="muted">{t("No named endpoint yet. Add one first.", "还没有命名端点。先新增一个即可。")}</div></section>'
+            )
+            body = f'<div class="grid">{helper}{add_form}{"".join(cards) or empty_endpoints_html}</div>'
+            self._send_html(200, self._page(t("Models & APIs", "模型与接口"), body, tab="/endpoints", msg=msg, err=err))
 
         def _render_channels(self, *, msg: str = "", err: str = "") -> None:
             cfg = self._load_config()
@@ -1373,13 +1529,13 @@ def run_webui(
   <div class="field"><label><input type="checkbox" name="ch_{escape(sid)}_enabled" {"checked" if bool(getattr(raw_channel, "enabled", False)) else ""}> {t("enabled", "启用")}</label></div>
   <div class="endpoint-fields">
     {''.join(field_rows)}
-    <div class="field">
-      <label>{t("credential storage", "凭据存储方式")}</label>
-      <select name="ch_{escape(sid)}_auth_mode">
-        <option value="env_placeholders" {"selected" if auth_mode == "env_placeholders" else ""}>{t("env placeholders (recommended)", "环境变量占位（推荐）")}</option>
-        <option value="plain" {"selected" if auth_mode == "plain" else ""}>{t("plain text", "明文")}</option>
-      </select>
-    </div>
+	    <div class="field">
+	      <label>{t("credential storage", "凭据存储方式")}</label>
+	      <select name="ch_{escape(sid)}_auth_mode">
+	        <option value="env_placeholders" {"selected" if auth_mode == "env_placeholders" else ""}>{t("env placeholders (recommended)", "环境变量占位（推荐）")}</option>
+	        <option value="plain" {"selected" if auth_mode == "plain" else ""}>{t("plain text (not recommended)", "明文（不推荐）")}</option>
+	      </select>
+	    </div>
     <div class="field">
       <label>{t("credential env prefix", "凭据环境变量前缀")}</label>
       <input type="text" name="ch_{escape(sid)}_env_prefix" value="{escape(env_prefix)}" placeholder="{escape(str(spec['env_prefix']))}">
@@ -1388,13 +1544,13 @@ def run_webui(
       <label>{t("allowFrom list (CSV)", "allowFrom 列表（逗号分隔）")}</label>
       <input type="text" name="ch_{escape(sid)}_allow_csv" value="{escape(allow_csv)}" placeholder="id1, id2">
     </div>
-    <div class="field">
-      <label>{t("allowFrom storage", "allowFrom 存储方式")}</label>
-      <select name="ch_{escape(sid)}_allow_mode">
-        <option value="env_placeholders" {"selected" if allow_mode == "env_placeholders" else ""}>{t("env placeholders (recommended)", "环境变量占位（推荐）")}</option>
-        <option value="plain" {"selected" if allow_mode == "plain" else ""}>{t("plain text", "明文")}</option>
-      </select>
-    </div>
+	    <div class="field">
+	      <label>{t("allowFrom storage", "allowFrom 存储方式")}</label>
+	      <select name="ch_{escape(sid)}_allow_mode">
+	        <option value="env_placeholders" {"selected" if allow_mode == "env_placeholders" else ""}>{t("env placeholders (recommended)", "环境变量占位（推荐）")}</option>
+	        <option value="plain" {"selected" if allow_mode == "plain" else ""}>{t("plain list (not recommended)", "明文列表（不推荐）")}</option>
+	      </select>
+	    </div>
     <div class="field">
       <label>{t("allowFrom env prefix", "allowFrom 环境变量前缀")}</label>
       <input type="text" name="ch_{escape(sid)}_allow_env_prefix" value="{escape(allow_prefix)}" placeholder="{escape(str(spec['allow_env_prefix']))}">
@@ -1487,6 +1643,12 @@ def run_webui(
       <li>{t("allowFrom supports both plain IDs and env placeholders; team sharing usually prefers env placeholders.", "allowFrom 同时支持明文和环境变量占位；团队共享配置通常建议用 env 占位。")}</li>
     </ul>
     <div class="muted">{t("Restart gateway after changing channel token/secret.", "修改渠道 token/secret 后通常需要重启 gateway。")}</div>
+    <form method="post" style="margin-top:10px">
+      <input type="hidden" name="action" value="restart_gateway">
+      <button class="btn warn icon-btn" type="submit" onclick="return confirm('{t('Restart gateway now?', '立即重启 gateway 吗？')}');">
+        <span aria-hidden="true">⟳</span>{t("Restart Gateway", "重启 Gateway")}
+      </button>
+    </form>
   </section>
 </div>
 <form method="post" class="card" style="margin-top:14px">
@@ -1753,21 +1915,82 @@ def run_webui(
 """
             self._send_html(200, self._page(t("Skills", "技能"), body, tab="/skills", msg=msg, err=err))
 
-        def _render_media(self, *, msg: str = "", err: str = "") -> None:
+        def _render_media(
+            self,
+            *,
+            msg: str = "",
+            err: str = "",
+            media_page: int = 1,
+            exports_page: int = 1,
+        ) -> None:
             cfg = self._load_config()
+            zh = self._ui_lang == "zh-CN"
+            t = (lambda en, zh_cn: zh_cn if zh else en)
             configured_exports_dir = (cfg.tools.files_hub.exports_dir or "").strip()
             effective_exports_dir = get_exports_dir(configured_exports_dir)
+
+            media_rows = _list_media_rows()
+            export_rows = _list_store_rows(effective_exports_dir)
+
+            def _slice_page(rows: list[dict[str, Any]], page: int) -> tuple[list[dict[str, Any]], int, int]:
+                total_pages = max(1, (len(rows) + _MEDIA_PAGE_SIZE - 1) // _MEDIA_PAGE_SIZE)
+                current = min(max(1, page), total_pages)
+                start = (current - 1) * _MEDIA_PAGE_SIZE
+                return rows[start : start + _MEDIA_PAGE_SIZE], current, total_pages
+
+            media_page_rows, media_page, media_total_pages = _slice_page(media_rows, media_page)
+            export_page_rows, exports_page, exports_total_pages = _slice_page(export_rows, exports_page)
+
+            def _media_tab_url(*, m_page: int, e_page: int) -> str:
+                return self._url_with_lang(f"/media?media_page={m_page}&exports_page={e_page}")
+
+            def _render_pager(scope: str, current: int, total: int) -> str:
+                if total <= 1:
+                    return ""
+                other = exports_page if scope == "media" else media_page
+
+                def _page_url(target: int) -> str:
+                    if scope == "media":
+                        return _media_tab_url(m_page=target, e_page=other)
+                    return _media_tab_url(m_page=other, e_page=target)
+
+                parts: list[str] = []
+                if current > 1:
+                    parts.append(f'<a class="btn subtle" href="{_page_url(current - 1)}">← {t("Prev", "上一页")}</a>')
+                else:
+                    parts.append(f'<span class="btn subtle" style="opacity:.45; cursor:default;">← {t("Prev", "上一页")}</span>')
+                start = max(1, current - 2)
+                end = min(total, current + 2)
+                if start > 1:
+                    parts.append(f'<a class="btn subtle" href="{_page_url(1)}">1</a>')
+                if start > 2:
+                    parts.append('<span class="muted">…</span>')
+                for idx in range(start, end + 1):
+                    klass = "btn primary" if idx == current else "btn subtle"
+                    parts.append(f'<a class="{klass}" href="{_page_url(idx)}">{idx}</a>')
+                if end < total - 1:
+                    parts.append('<span class="muted">…</span>')
+                if end < total:
+                    parts.append(f'<a class="btn subtle" href="{_page_url(total)}">{total}</a>')
+                if current < total:
+                    parts.append(f'<a class="btn subtle" href="{_page_url(current + 1)}">{t("Next", "下一页")} →</a>')
+                else:
+                    parts.append(f'<span class="btn subtle" style="opacity:.45; cursor:default;">{t("Next", "下一页")} →</span>')
+                return f'<div class="row" style="margin-top:10px">{"".join(parts)}</div>'
 
             def _render_store_block(
                 *,
                 scope: str,
                 title: str,
                 desc: str,
-                rows: list[dict[str, Any]],
+                rows_all: list[dict[str, Any]],
+                rows_page: list[dict[str, Any]],
+                current_page: int,
+                total_pages: int,
                 root_dir: Path,
             ) -> str:
                 table_rows = []
-                for r in rows[:300]:
+                for r in rows_page:
                     size_kb = f"{r['size']/1024:.1f} KB"
                     from datetime import datetime
 
@@ -1781,89 +2004,106 @@ def run_webui(
   <td class="small">{escape(mtime)}</td>
   <td class="mono small">{escape(r['path'])}</td>
   <td>
-    <button class="btn" type="submit" name="action" value="delete_one:{escape(r['name'])}" onclick="return confirm('删除该文件?');">删除</button>
+    <button class="btn icon-btn" type="submit" name="action" value="delete_one:{escape(r['name'])}" onclick="return confirm('{t('Delete this file?', '删除该文件？')}');">
+      <span aria-hidden="true">🗑</span>{t("Delete", "删除")}
+    </button>
   </td>
 </tr>
 """
                     )
+                pager = _render_pager(scope, current_page, total_pages)
                 return f"""
 <section class="card" style="margin-top:14px">
   <h2>{escape(title)}</h2>
   <table>
-    <tr><th>目录</th><td><code>{escape(str(root_dir))}</code></td></tr>
-    <tr><th>文件数</th><td>{len(rows)}</td></tr>
+    <tr><th>{t("Directory", "目录")}</th><td><code>{escape(str(root_dir))}</code></td></tr>
+    <tr><th>{t("File count", "文件数")}</th><td>{len(rows_all)}</td></tr>
+    <tr><th>{t("Page", "分页")}</th><td>{current_page}/{total_pages}（{t("showing", "显示")} {len(rows_page)} / {len(rows_all)}）</td></tr>
   </table>
   <div class="muted" style="margin-top:8px">{escape(desc)}</div>
-  <form method="post" style="margin-top:14px">
+  <form method="post" data-scope="{escape(scope)}" style="margin-top:14px">
     <input type="hidden" name="scope" value="{escape(scope)}">
+    <input type="hidden" name="media_page" value="{media_page}">
+    <input type="hidden" name="exports_page" value="{exports_page}">
     <div class="row" style="margin-bottom:10px">
-      <button class="btn warn" type="submit" name="action" value="delete_selected" onclick="return confirm('删除选中的文件?');">删除选中项</button>
-      <button class="btn subtle" type="submit" name="action" value="refresh">刷新</button>
+      <button class="btn subtle icon-btn" type="button" onclick="nbSelectAll(this.form, true)"><span aria-hidden="true">☑</span>{t("Select all", "全选")}</button>
+      <button class="btn subtle icon-btn" type="button" onclick="nbSelectAll(this.form, false)"><span aria-hidden="true">☐</span>{t("Clear", "清空")}</button>
+      <button class="btn warn icon-btn" type="submit" name="action" value="delete_selected" onclick="return confirm('{t('Delete selected files?', '删除选中文件？')}');"><span aria-hidden="true">🗑</span>{t("Delete selected", "删除选中项")}</button>
+      <button class="btn subtle icon-btn" type="submit" name="action" value="refresh"><span aria-hidden="true">↻</span>{t("Refresh", "刷新")}</button>
     </div>
     <table>
-      <tr><th></th><th>显示名 / 文件名</th><th>大小</th><th>修改时间</th><th>路径</th><th></th></tr>
-      {''.join(table_rows) or '<tr><td colspan="6" class="muted">目录为空</td></tr>'}
+      <tr><th></th><th>{t("Display name / filename", "显示名 / 文件名")}</th><th>{t("Size", "大小")}</th><th>{t("Modified", "修改时间")}</th><th>{t("Path", "路径")}</th><th></th></tr>
+      {''.join(table_rows) or f'<tr><td colspan="6" class="muted">{t("Directory is empty", "目录为空")}</td></tr>'}
     </table>
+    {pager}
   </form>
 </section>
 """
 
-            media_rows = _list_media_rows()
-            export_rows = _list_store_rows(effective_exports_dir)
             media_dir = get_media_dir()
             exports_dir = effective_exports_dir
             body = f"""
 <div class="grid cols-2">
   <section class="card">
-    <h2>文件处理总览</h2>
+    <h2>{t("File Operations Overview", "文件处理总览")}</h2>
     <table>
-      <tr><th>上传附件（media）</th><td>{len(media_rows)} 个</td></tr>
-      <tr><th>生成输出（exports）</th><td>{len(export_rows)} 个</td></tr>
-      <tr><th>路由建议</th><td><code>files_hub(scope=...)</code> 统一管理</td></tr>
+      <tr><th>{t("Uploaded attachments (media)", "上传附件（media）")}</th><td>{len(media_rows)}</td></tr>
+      <tr><th>{t("Generated outputs (exports)", "生成输出（exports）")}</th><td>{len(export_rows)}</td></tr>
+      <tr><th>{t("Route hint", "路由建议")}</th><td><code>files_hub(scope=...)</code> {t("for unified management", "统一管理")}</td></tr>
     </table>
-    <div class="muted" style="margin-top:8px">遵循“输入(media) / 处理(workspace) / 输出(exports)”分层，减少误删原件和工具重复。</div>
+    <div class="muted" style="margin-top:8px">{t("Use input(media) / process(workspace) / output(exports) layering to reduce accidental deletion and duplicated tools.", "遵循“输入(media) / 处理(workspace) / 输出(exports)”分层，减少误删原件和工具重复。")}</div>
   </section>
   <section class="card">
-    <h2>聊天内文件管理命令（推荐）</h2>
+    <h2>{t("In-chat File Commands (Recommended)", "聊天内文件管理命令（推荐）")}</h2>
     <ul class="list small">
-      <li>推荐：<code>files_hub(action=&quot;list&quot;, scope=&quot;media&quot;)</code></li>
-      <li>删除：<code>files_hub(action=&quot;delete&quot;, scope=&quot;media&quot;, names=[...])</code></li>
-      <li>导出目录：<code>files_hub(action=&quot;list&quot;, scope=&quot;exports&quot;)</code></li>
-      <li>如果 TG 文件名看起来像随机串，请查看 <code>displayName</code>（新上传文件会尽量保留原文件名/后缀）</li>
+      <li>{t("List (recommended)", "列出（推荐）")}：<code>files_hub(action=&quot;list&quot;, scope=&quot;media&quot;)</code></li>
+      <li>{t("Delete", "删除")}：<code>files_hub(action=&quot;delete&quot;, scope=&quot;media&quot;, names=[...])</code></li>
+      <li>{t("Export list", "导出目录")}：<code>files_hub(action=&quot;list&quot;, scope=&quot;exports&quot;)</code></li>
+      <li>{t("If TG filename looks random, check", "如果 TG 文件名看起来像随机串，请查看")} <code>displayName</code>（{t("new uploads try to keep original filename/extension", "新上传文件会尽量保留原文件名/后缀")}）</li>
     </ul>
   </section>
 </div>
 <form method="post" class="card" style="margin-top:14px">
-  <h2>导出目录设置</h2>
+  <h2>{t("Exports Directory", "导出目录设置")}</h2>
+  <input type="hidden" name="media_page" value="{media_page}">
+  <input type="hidden" name="exports_page" value="{exports_page}">
   <div class="field">
-    <label>tools.filesHub.exportsDir（留空=默认 <code>~/.nanobot/exports</code>）</label>
-    <input name="exports_dir" value="{escape(configured_exports_dir)}" placeholder="例如：/data/nanobot-exports 或 exports">
+    <label>{t("tools.filesHub.exportsDir (empty = default", "tools.filesHub.exportsDir（留空=默认")} <code>~/.nanobot/exports</code>{t(")", "）")}</label>
+    <input name="exports_dir" value="{escape(configured_exports_dir)}" placeholder="{t('Example: /data/nanobot-exports or exports', '例如：/data/nanobot-exports 或 exports')}">
   </div>
   <div class="row">
-    <button class="btn primary" type="submit" name="action" value="save_exports_dir">保存导出目录</button>
-    <button class="btn subtle" type="submit" name="action" value="save_exports_dir_default">恢复默认目录</button>
+    <button class="btn primary icon-btn" type="submit" name="action" value="save_exports_dir"><span aria-hidden="true">💾</span>{t("Save exports directory", "保存导出目录")}</button>
+    <button class="btn subtle icon-btn" type="submit" name="action" value="save_exports_dir_default"><span aria-hidden="true">↺</span>{t("Reset to default", "恢复默认目录")}</button>
   </div>
 </form>
 {_render_store_block(
     scope="media",
-    title="媒体目录（上传附件）",
-    desc="这里是聊天渠道（TG/Discord/Feishu 等）下载的附件目录。建议先查看再删除。",
-    rows=media_rows,
+    title=t("Media Directory (Uploaded Attachments)", "媒体目录（上传附件）"),
+    desc=t("This directory stores attachments downloaded from chat channels (TG/Discord/Feishu/etc). Review before deletion.", "这里是聊天渠道（TG/Discord/Feishu 等）下载的附件目录。建议先查看再删除。"),
+    rows_all=media_rows,
+    rows_page=media_page_rows,
+    current_page=media_page,
+    total_pages=media_total_pages,
     root_dir=media_dir,
 )}
 {_render_store_block(
     scope="exports",
-    title="导出目录（生成文件）",
-    desc="这里建议存放机器人生成的结果文件（如 txt/docx/pdf/xlsx 等），便于统一下载和清理。",
-    rows=export_rows,
+    title=t("Exports Directory (Generated Files)", "导出目录（生成文件）"),
+    desc=t("Store generated result files here (txt/docx/pdf/xlsx/etc) for unified download and cleanup.", "这里建议存放机器人生成的结果文件（如 txt/docx/pdf/xlsx 等），便于统一下载和清理。"),
+    rows_all=export_rows,
+    rows_page=export_page_rows,
+    current_page=exports_page,
+    total_pages=exports_total_pages,
     root_dir=exports_dir,
 )}
 """
-            self._send_html(200, self._page("Media", body, tab="/media", msg=msg, err=err))
+            self._send_html(200, self._page(t("Media", "媒体文件"), body, tab="/media", msg=msg, err=err))
 
         def _handle_post_endpoints(self, form: dict[str, list[str]]) -> None:
             cfg = self._load_config()
             action = self._form_str(form, "action")
+            zh = self._ui_lang == "zh-CN"
+            t = (lambda en, zh_cn: zh_cn if zh else en)
             if action == "set_default_model":
                 model = (
                     self._form_str(form, "default_model_custom").strip()
@@ -1871,17 +2111,23 @@ def run_webui(
                     or self._form_str(form, "default_model").strip()
                 )
                 if not model:
-                    raise ValueError("default_model 不能为空")
+                    raise ValueError(t("default_model cannot be empty.", "default_model 不能为空。"))
                 ok, reason = _check_default_model_ref(
                     load_config(cfg_path, apply_profiles=False, resolve_env=True),
                     model,
                     probe_remote=True,
                 )
                 if not ok:
-                    raise ValueError(f"默认模型检测失败: {reason}")
+                    raise ValueError(t(f"Default model check failed: {reason}", f"默认模型检测失败: {reason}"))
                 cfg.agents.defaults.model = model
                 self._save_config(cfg)
-                self._redirect("/endpoints", msg=f"默认模型已保存（检测通过: {reason}）")
+                self._redirect(
+                    "/endpoints",
+                    msg=t(
+                        f"Default model saved (check passed: {reason}). Restart gateway to apply.",
+                        f"默认模型已保存（检测通过: {reason}）。请重启 gateway 生效。",
+                    ),
+                )
                 return
 
             if action == "set_agent_preferences":
@@ -1891,7 +2137,13 @@ def run_webui(
                 cfg.agents.defaults.auto_reply_fallback_language = fallback_language
                 cfg.agents.defaults.cross_lingual_search = self._form_bool(form, "cross_lingual_search")
                 self._save_config(cfg)
-                self._redirect("/endpoints", msg="语言与搜索策略已保存")
+                self._redirect(
+                    "/endpoints",
+                    msg=t(
+                        "Language/search policy saved. Restart gateway to apply.",
+                        "语言与搜索策略已保存。请重启 gateway 生效。",
+                    ),
+                )
                 return
 
             if action == "set_agent_runtime_budget":
@@ -1940,20 +2192,32 @@ def run_webui(
                     minimum=0,
                 )
                 self._save_config(cfg)
-                self._redirect("/endpoints", msg="资源策略已保存")
+                self._redirect(
+                    "/endpoints",
+                    msg=t(
+                        "Runtime budget settings saved. Restart gateway to apply.",
+                        "资源策略已保存。请重启 gateway 生效。",
+                    ),
+                )
                 return
 
             if action == "delete_endpoint":
                 original_name = self._form_str(form, "original_name") or self._form_str(form, "name")
                 name = original_name.strip()
                 if not name:
-                    raise ValueError("缺少端点名称")
+                    raise ValueError(t("Missing endpoint name.", "缺少端点名称。"))
                 if name in cfg.providers.endpoints:
                     del cfg.providers.endpoints[name]
                     self._save_config(cfg)
-                    self._redirect("/endpoints", msg=f"已删除端点: {name}")
+                    self._redirect(
+                        "/endpoints",
+                        msg=t(
+                            f"Deleted endpoint: {name}. Restart gateway to apply.",
+                            f"已删除端点: {name}。请重启 gateway 生效。",
+                        ),
+                    )
                     return
-                raise ValueError(f"端点不存在: {name}")
+                raise ValueError(t(f"Endpoint not found: {name}", f"端点不存在: {name}"))
 
             if action != "save_endpoint":
                 raise ValueError("Unsupported endpoints action")
@@ -1961,7 +2225,7 @@ def run_webui(
             original_name = self._form_str(form, "original_name").strip()
             name = self._form_str(form, "name").strip()
             if not name:
-                raise ValueError("端点名称不能为空")
+                raise ValueError(t("Endpoint name cannot be empty.", "端点名称不能为空。"))
 
             cfg_type = (self._form_str(form, "type") or "openai_compatible").strip().lower().replace("-", "_")
             api_base = self._form_str(form, "api_base").strip() or None
@@ -1988,16 +2252,34 @@ def run_webui(
                 del cfg.providers.endpoints[original_name]
             cfg.providers.endpoints[name] = ep
             self._save_config(cfg)
-            self._redirect("/endpoints", msg=f"端点已保存: {name}")
+            self._redirect(
+                "/endpoints",
+                msg=t(
+                    f"Endpoint saved: {name}. Restart gateway to apply.",
+                    f"端点已保存: {name}。请重启 gateway 生效。",
+                ),
+            )
 
         def _handle_post_channels(self, form: dict[str, list[str]]) -> None:
             cfg = self._load_config()
             action = self._form_str(form, "action")
+            zh = self._ui_lang == "zh-CN"
+            t = (lambda en, zh_cn: zh_cn if zh else en)
+            if action == "restart_gateway":
+                ok, detail = _restart_gateway_runtime()
+                if ok:
+                    self._redirect("/channels", msg=t("Gateway restart request sent.", "Gateway 重启请求已发送。"))
+                else:
+                    self._redirect(
+                        "/channels",
+                        err=t("Gateway restart failed", "Gateway 重启失败") + f": {_short_text(detail)}",
+                    )
+                return
             if action == "save_channels_quick":
                 selected_channel = self._form_str(form, "quick_channel_id", "").strip().lower()
                 selected_specs = [s for s in _CHANNEL_QUICK_SPECS if str(s["id"]).lower() == selected_channel]
                 if not selected_specs:
-                    raise ValueError("请选择一个有效渠道")
+                    raise ValueError(t("Please select a valid channel.", "请选择一个有效渠道。"))
                 for spec in selected_specs:
                     sid = str(spec["id"])
                     channel_obj = getattr(cfg.channels, sid)
@@ -2033,7 +2315,15 @@ def run_webui(
                     setattr(cfg.channels, sid, channel_obj)
 
                 self._save_config(cfg)
-                self._redirect("/channels", msg=f"渠道 `{selected_channel}` 配置已保存（如改 token/secret，请重启 gateway）")
+                self._redirect(
+                    "/channels",
+                    msg=(
+                        t(
+                            f"Channel `{selected_channel}` saved (restart gateway if token/secret changed).",
+                            f"渠道 `{selected_channel}` 配置已保存（如改 token/secret，请重启 gateway）。",
+                        )
+                    ),
+                )
                 return
 
             if action == "save_channels_json":
@@ -2041,7 +2331,13 @@ def run_webui(
                 data = _safe_json_object(raw, "channels")
                 cfg.channels = ChannelsConfig.model_validate(data)
                 self._save_config(cfg)
-                self._redirect("/channels", msg="Channels 配置已保存（如改了 token/secret，请重启 gateway）")
+                self._redirect(
+                    "/channels",
+                    msg=t(
+                        "Channels JSON saved (restart gateway if token/secret changed).",
+                        "Channels 配置已保存（如改了 token/secret，请重启 gateway）。",
+                    ),
+                )
                 return
 
             raise ValueError("Unsupported channels action")
@@ -2231,26 +2527,37 @@ def run_webui(
             raise ValueError("Unsupported skills action")
 
         def _handle_post_media(self, form: dict[str, list[str]]) -> None:
+            zh = self._ui_lang == "zh-CN"
+            t = (lambda en, zh_cn: zh_cn if zh else en)
             action = self._form_str(form, "action")
+            media_page = _safe_positive_int(self._form_str(form, "media_page", "1"), default=1)
+            exports_page = _safe_positive_int(self._form_str(form, "exports_page", "1"), default=1)
+            media_target = f"/media?media_page={media_page}&exports_page={exports_page}"
             if action in {"save_exports_dir", "save_exports_dir_default"}:
                 cfg = self._load_config()
                 raw = self._form_str(form, "exports_dir", "").strip()
                 cfg.tools.files_hub.exports_dir = "" if action == "save_exports_dir_default" else raw
                 self._save_config(cfg)
-                self._redirect("/media", msg="导出目录设置已保存")
+                self._redirect(
+                    media_target,
+                    msg=t("Exports directory setting saved.", "导出目录设置已保存。"),
+                )
                 return
 
             scope = (self._form_str(form, "scope", "media") or "media").strip().lower()
             if scope == "exports":
                 cfg = self._load_config()
                 root_dir = get_exports_dir(cfg.tools.files_hub.exports_dir).resolve()
-                scope_label = "导出目录"
+                scope_label = t("exports", "导出目录")
             else:
                 scope = "media"
                 root_dir = get_media_dir().resolve()
-                scope_label = "媒体目录"
+                scope_label = t("media", "媒体目录")
             if action == "refresh":
-                self._redirect("/media", msg=f"已刷新{scope_label}列表")
+                self._redirect(
+                    media_target,
+                    msg=t(f"Refreshed {scope_label} list.", f"已刷新{scope_label}列表。"),
+                )
                 return
 
             names: list[str] = []
@@ -2262,7 +2569,7 @@ def run_webui(
                 raise ValueError("Unsupported media action")
 
             if not names:
-                raise ValueError("请选择要删除的文件")
+                raise ValueError(t("Please select at least one file to delete.", "请选择要删除的文件。"))
 
             deleted = 0
             missing = 0
@@ -2282,8 +2589,13 @@ def run_webui(
                 p.unlink(missing_ok=True)
                 deleted += 1
             self._redirect(
-                "/media",
-                msg=f"{scope_label}已删除 {deleted} 个文件" + (f"，缺失 {missing} 个" if missing else ""),
+                media_target,
+                msg=(
+                    t(
+                        f"{scope_label}: deleted {deleted}" + (f", missing {missing}" if missing else ""),
+                        f"{scope_label}已删除 {deleted} 个文件" + (f"，缺失 {missing} 个" if missing else ""),
+                    )
+                ),
             )
 
     httpd = ThreadingHTTPServer((host, port), Handler)
