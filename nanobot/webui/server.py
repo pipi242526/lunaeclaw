@@ -78,6 +78,7 @@ from nanobot.webui.i18n import (
 )
 from nanobot.webui.routes import dispatch_get_route as _dispatch_get_route
 from nanobot.webui.services import (
+    evaluate_gateway_runtime_status as _evaluate_gateway_runtime_status,
     safe_positive_int as _safe_positive_int,
 )
 from nanobot.webui.diagnostics import (
@@ -85,11 +86,7 @@ from nanobot.webui.diagnostics import (
     collect_config_migration_hints,
     collect_tool_policy_diagnostics as _collect_tool_policy_diagnostics_impl,
 )
-from nanobot.gateway.control import (
-    get_gateway_runtime_state_path as _get_gateway_runtime_state_path,
-    is_gateway_runtime_fresh as _is_gateway_runtime_fresh,
-    read_gateway_runtime_state as _read_gateway_runtime_state,
-)
+from nanobot.gateway.control import get_gateway_runtime_state_path as _get_gateway_runtime_state_path
 
 
 def _collect_channel_runtime_issues(raw_cfg: Config, resolved_cfg: Config) -> list[str]:
@@ -148,41 +145,7 @@ def run_webui(
     gateway_state_path = _get_gateway_runtime_state_path(cfg_path)
 
     def _gateway_runtime_status() -> tuple[bool, str, str]:
-        """
-        Return (ready, reason_en, reason_zh).
-
-        `ready=True` means WebUI and a live gateway share the same runtime dir,
-        so config changes can be auto-applied by hot reload.
-        """
-        state = _read_gateway_runtime_state(cfg_path)
-        if not state:
-            return (
-                False,
-                "no gateway runtime state found in this config directory",
-                "当前配置目录未发现 gateway 运行状态文件",
-            )
-        expected_dir = str(cfg_path.expanduser().resolve().parent)
-        actual_dir = str(state.get("dataDir") or "").strip()
-        if not actual_dir or actual_dir != expected_dir:
-            return (
-                False,
-                "gateway data directory mismatch",
-                "gateway 数据目录不一致",
-            )
-        raw_poll = (os.environ.get("NANOBOT_GATEWAY_RELOAD_POLL_SECONDS") or "2.0").strip()
-        try:
-            poll_seconds = max(0.5, float(raw_poll))
-        except ValueError:
-            poll_seconds = 2.0
-        max_age = max(6.0, poll_seconds * 3.0 + 2.0)
-        if not _is_gateway_runtime_fresh(state, max_age_seconds=max_age):
-            status = str(state.get("status") or "unknown")
-            return (
-                False,
-                f"gateway not alive in this directory (status={status})",
-                f"当前目录内 gateway 未在线（status={status}）",
-            )
-        return (True, "ok", "正常")
+        return _evaluate_gateway_runtime_status(cfg_path)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "nanobot-webui/0.1"
