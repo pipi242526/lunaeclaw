@@ -1,6 +1,8 @@
 import json
 
-from nanobot.config.loader import inspect_config_hints, save_config
+import pytest
+
+from nanobot.config.loader import inspect_config_hints, load_config_strict, save_config
 from nanobot.config.schema import Config, EndpointProviderConfig
 
 
@@ -84,3 +86,16 @@ def test_inspect_config_hints_handles_invalid_json(tmp_path):
     hints = inspect_config_hints(path)
     assert hints
     assert "config parse error" in hints[0]
+
+
+def test_load_config_strict_raises_on_invalid_json(tmp_path):
+    path = tmp_path / "config.json"
+    path.write_text("{ bad json", encoding="utf-8")
+    with pytest.raises(json.JSONDecodeError):
+        load_config_strict(path, apply_profiles=False, resolve_env=False)
+
+
+def test_load_config_strict_raises_on_missing_file(tmp_path):
+    path = tmp_path / "missing.json"
+    with pytest.raises(FileNotFoundError):
+        load_config_strict(path, apply_profiles=False, resolve_env=False)

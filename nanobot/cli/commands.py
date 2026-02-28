@@ -1,6 +1,7 @@
 """CLI commands for nanobot."""
 
 import asyncio
+from dataclasses import dataclass
 import os
 import shutil
 import signal
@@ -8,6 +9,7 @@ import subprocess
 from pathlib import Path
 import select
 import sys
+from typing import Any
 
 import typer
 from rich.console import Console
@@ -548,6 +550,134 @@ def _build_agent_loop(
     )
 
 
+@dataclass
+class _GatewayRuntimeState:
+    config: Config
+    bus: Any
+    agent: Any
+    channels: Any
+    cron: Any
+    heartbeat: Any
+    agent_task: asyncio.Task
+    channels_task: asyncio.Task
+
+
+def _gateway_reload_poll_seconds() -> float:
+    raw = (os.environ.get("NANOBOT_GATEWAY_RELOAD_POLL_SECONDS") or "2.0").strip()
+    try:
+        value = float(raw)
+    except ValueError:
+        return 2.0
+    return max(0.5, value)
+
+
+def _task_exit_reason(task: asyncio.Task, *, name: str) -> str | None:
+    if not task.done():
+        return None
+    if task.cancelled():
+        return f"{name} cancelled"
+    exc = task.exception()
+    if exc is None:
+        return f"{name} exited unexpectedly"
+    return f"{name} failed: {exc}"
+
+
+async def _start_gateway_runtime(config: Config, *, data_dir: Path) -> _GatewayRuntimeState:
+    from nanobot.bus.events import OutboundMessage
+    from nanobot.bus.queue import MessageBus
+    from nanobot.channels.manager import ChannelManager
+    from nanobot.cron.service import CronService
+    from nanobot.cron.types import CronJob
+    from nanobot.heartbeat.service import HeartbeatService
+    from nanobot.session.manager import SessionManager
+
+    bus = MessageBus()
+    provider = _make_provider(config)
+    session_manager = SessionManager(
+        config.workspace_path,
+        max_cache_entries=config.agents.defaults.session_cache_max_entries,
+    )
+    cron_store_path = data_dir / "cron" / "jobs.json"
+    cron = CronService(cron_store_path)
+    agent = _build_agent_loop(
+        config=config,
+        bus=bus,
+        provider=provider,
+        cron_service=cron,
+        session_manager=session_manager,
+    )
+
+    async def on_cron_job(job: CronJob) -> str | None:
+        response = await agent.process_direct(
+            job.payload.message,
+            session_key=f"cron:{job.id}",
+            channel=job.payload.channel or "cli",
+            chat_id=job.payload.to or "direct",
+        )
+        if job.payload.deliver and job.payload.to:
+            await bus.publish_outbound(
+                OutboundMessage(
+                    channel=job.payload.channel or "cli",
+                    chat_id=job.payload.to,
+                    content=response or "",
+                )
+            )
+        return response
+
+    cron.on_job = on_cron_job
+
+    async def on_heartbeat(prompt: str) -> str:
+        return await agent.process_direct(prompt, session_key="heartbeat")
+
+    heartbeat = HeartbeatService(
+        workspace=config.workspace_path,
+        on_heartbeat=on_heartbeat,
+        interval_s=30 * 60,
+        enabled=True,
+    )
+    channels = ChannelManager(config, bus)
+
+    await cron.start()
+    await heartbeat.start()
+    agent_task = asyncio.create_task(agent.run(), name="nanobot.agent.run")
+    channels_task = asyncio.create_task(channels.start_all(), name="nanobot.channels.start_all")
+
+    return _GatewayRuntimeState(
+        config=config,
+        bus=bus,
+        agent=agent,
+        channels=channels,
+        cron=cron,
+        heartbeat=heartbeat,
+        agent_task=agent_task,
+        channels_task=channels_task,
+    )
+
+
+async def _stop_gateway_runtime(state: _GatewayRuntimeState) -> None:
+    state.agent.stop()
+    state.heartbeat.stop()
+    state.cron.stop()
+    await state.channels.stop_all()
+    await state.agent.close_mcp()
+    for task in (state.agent_task, state.channels_task):
+        if not task.done():
+            task.cancel()
+    await asyncio.gather(state.agent_task, state.channels_task, return_exceptions=True)
+
+
+def _print_gateway_runtime_summary(state: _GatewayRuntimeState) -> None:
+    if state.channels.enabled_channels:
+        console.print(f"[green]✓[/green] Channels enabled: {', '.join(state.channels.enabled_channels)}")
+    else:
+        console.print("[yellow]Warning: No channels enabled[/yellow]")
+
+    cron_status = state.cron.status()
+    if cron_status.get("jobs", 0) > 0:
+        console.print(f"[green]✓[/green] Cron: {cron_status['jobs']} scheduled jobs")
+    console.print("[green]✓[/green] Heartbeat: every 30m")
+
+
 # ============================================================================
 # Gateway / Server
 # ============================================================================
@@ -559,104 +689,97 @@ def gateway(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
 ):
     """Start the nanobot gateway."""
-    from nanobot.config.loader import load_config, get_data_dir
-    from nanobot.bus.queue import MessageBus
-    from nanobot.channels.manager import ChannelManager
-    from nanobot.session.manager import SessionManager
-    from nanobot.cron.service import CronService
-    from nanobot.cron.types import CronJob
-    from nanobot.heartbeat.service import HeartbeatService
-    
+    from loguru import logger
+    from nanobot.config.loader import get_config_path, get_data_dir, load_config, load_config_strict
+    from nanobot.gateway.control import compute_runtime_config_fingerprint
+
     if verbose:
         import logging
+
         logging.basicConfig(level=logging.DEBUG)
-    
+
     console.print(f"{__logo__} Starting nanobot gateway on port {port}...")
-    
-    config = load_config()
-    _ensure_claude_code_runtime_dependencies(config)
-    bus = MessageBus()
-    provider = _make_provider(config)
-    session_manager = SessionManager(
-        config.workspace_path,
-        max_cache_entries=config.agents.defaults.session_cache_max_entries,
-    )
-    
-    # Create cron service first (callback set after agent creation)
-    cron_store_path = get_data_dir() / "cron" / "jobs.json"
-    cron = CronService(cron_store_path)
-    
-    # Create agent with cron service
-    agent = _build_agent_loop(
-        config=config,
-        bus=bus,
-        provider=provider,
-        cron_service=cron,
-        session_manager=session_manager,
-    )
-    
-    # Set cron callback (needs agent)
-    async def on_cron_job(job: CronJob) -> str | None:
-        """Execute a cron job through the agent."""
-        response = await agent.process_direct(
-            job.payload.message,
-            session_key=f"cron:{job.id}",
-            channel=job.payload.channel or "cli",
-            chat_id=job.payload.to or "direct",
-        )
-        if job.payload.deliver and job.payload.to:
-            from nanobot.bus.events import OutboundMessage
-            await bus.publish_outbound(OutboundMessage(
-                channel=job.payload.channel or "cli",
-                chat_id=job.payload.to,
-                content=response or ""
-            ))
-        return response
-    cron.on_job = on_cron_job
-    
-    # Create heartbeat service
-    async def on_heartbeat(prompt: str) -> str:
-        """Execute heartbeat through the agent."""
-        return await agent.process_direct(prompt, session_key="heartbeat")
-    
-    heartbeat = HeartbeatService(
-        workspace=config.workspace_path,
-        on_heartbeat=on_heartbeat,
-        interval_s=30 * 60,  # 30 minutes
-        enabled=True
-    )
-    
-    # Create channel manager
-    channels = ChannelManager(config, bus)
-    
-    if channels.enabled_channels:
-        console.print(f"[green]✓[/green] Channels enabled: {', '.join(channels.enabled_channels)}")
-    else:
-        console.print("[yellow]Warning: No channels enabled[/yellow]")
-    
-    cron_status = cron.status()
-    if cron_status["jobs"] > 0:
-        console.print(f"[green]✓[/green] Cron: {cron_status['jobs']} scheduled jobs")
-    
-    console.print(f"[green]✓[/green] Heartbeat: every 30m")
-    
+
+    config_path = get_config_path()
+    data_dir = get_data_dir()
+    poll_seconds = _gateway_reload_poll_seconds()
+    console.print(f"[green]✓[/green] Hot reload: enabled (poll every {poll_seconds:.1f}s)")
+
     async def run():
+        state: _GatewayRuntimeState | None = None
+        fingerprint = ""
+        failed_fingerprint: str | None = None
         try:
-            await cron.start()
-            await heartbeat.start()
-            await asyncio.gather(
-                agent.run(),
-                channels.start_all(),
-            )
+            if config_path.exists():
+                config = load_config_strict(config_path, apply_profiles=True, resolve_env=True)
+            else:
+                config = load_config(config_path, apply_profiles=True, resolve_env=True)
+            _ensure_claude_code_runtime_dependencies(config)
+            state = await _start_gateway_runtime(config, data_dir=data_dir)
+            _print_gateway_runtime_summary(state)
+            fingerprint = compute_runtime_config_fingerprint(config_path)
+            while True:
+                await asyncio.sleep(poll_seconds)
+
+                if state is None:
+                    continue
+
+                agent_issue = _task_exit_reason(state.agent_task, name="agent loop")
+                if agent_issue:
+                    logger.error("Gateway runtime degraded: {}", agent_issue)
+                    console.print(f"[yellow]↻[/yellow] Runtime degraded ({agent_issue}), reloading...")
+                    old_config = state.config
+                    await _stop_gateway_runtime(state)
+                    try:
+                        state = await _start_gateway_runtime(old_config, data_dir=data_dir)
+                        _print_gateway_runtime_summary(state)
+                    except Exception as restart_error:
+                        logger.exception("Gateway recovery failed")
+                        raise RuntimeError(f"gateway runtime recovery failed: {restart_error}") from restart_error
+                    continue
+
+                next_fingerprint = compute_runtime_config_fingerprint(config_path)
+                if next_fingerprint == fingerprint:
+                    continue
+                if next_fingerprint == failed_fingerprint:
+                    continue
+
+                try:
+                    next_config = load_config_strict(config_path, apply_profiles=True, resolve_env=True)
+                    _ensure_claude_code_runtime_dependencies(next_config)
+                except Exception as e:
+                    failed_fingerprint = next_fingerprint
+                    logger.warning("Skip reload due to invalid config/env snapshot: {}", e)
+                    console.print(f"[yellow]Config reload skipped[/yellow]: {e}")
+                    continue
+
+                console.print("[cyan]↻[/cyan] Detected config/env change, reloading gateway runtime...")
+                old_config = state.config
+                await _stop_gateway_runtime(state)
+                try:
+                    state = await _start_gateway_runtime(next_config, data_dir=data_dir)
+                    fingerprint = next_fingerprint
+                    failed_fingerprint = None
+                    _print_gateway_runtime_summary(state)
+                    console.print("[green]✓[/green] Gateway runtime reloaded")
+                except Exception as e:
+                    logger.exception("Gateway reload failed, trying rollback")
+                    console.print(f"[red]Reload failed[/red]: {e}")
+                    console.print("[yellow]Attempting rollback to previous runtime...[/yellow]")
+                    try:
+                        state = await _start_gateway_runtime(old_config, data_dir=data_dir)
+                        _print_gateway_runtime_summary(state)
+                        fingerprint = compute_runtime_config_fingerprint(config_path)
+                        console.print("[green]✓[/green] Rollback succeeded")
+                    except Exception as rollback_error:
+                        logger.exception("Gateway rollback failed")
+                        raise RuntimeError(f"gateway rollback failed: {rollback_error}") from rollback_error
         except KeyboardInterrupt:
             console.print("\nShutting down...")
         finally:
-            await agent.close_mcp()
-            heartbeat.stop()
-            cron.stop()
-            agent.stop()
-            await channels.stop_all()
-    
+            if state is not None:
+                await _stop_gateway_runtime(state)
+
     asyncio.run(run())
 
 

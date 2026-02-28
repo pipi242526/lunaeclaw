@@ -42,19 +42,39 @@ def load_config(
 
     if path.exists():
         try:
-            with open(path, encoding="utf-8") as f:
-                data = json.load(f)
-            data = _migrate_config(data)
-            if resolve_env:
-                data = _interpolate_env_placeholders(data)
-            if apply_profiles:
-                data = _apply_active_profile(data)
-            return Config.model_validate(data)
+            return _load_config_from_path(
+                path,
+                apply_profiles=apply_profiles,
+                resolve_env=resolve_env,
+            )
         except (json.JSONDecodeError, ValueError) as e:
             print(f"Warning: Failed to load config from {path}: {e}")
             print("Using default configuration.")
 
     return Config()
+
+
+def load_config_strict(
+    config_path: Path | None = None,
+    apply_profiles: bool = True,
+    resolve_env: bool = True,
+) -> Config:
+    """
+    Load configuration strictly from file.
+
+    Unlike `load_config`, this function does not fall back to defaults on
+    parse/validation errors. Callers can use it for runtime reload paths where
+    silently continuing with defaults would be unsafe.
+    """
+    path = config_path or get_config_path()
+    _load_env_files()
+    if not path.exists():
+        raise FileNotFoundError(f"Config file not found: {path}")
+    return _load_config_from_path(
+        path,
+        apply_profiles=apply_profiles,
+        resolve_env=resolve_env,
+    )
 
 
 def save_config(config: Config, config_path: Path | None = None) -> None:
@@ -71,8 +91,33 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
     data = config.model_dump(by_alias=True)
     data = _slim_config_for_save(data)
 
-    with open(path, "w", encoding="utf-8") as f:
+    _atomic_write_json(path, data)
+
+
+def _load_config_from_path(
+    path: Path,
+    *,
+    apply_profiles: bool,
+    resolve_env: bool,
+) -> Config:
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    data = _migrate_config(data)
+    if resolve_env:
+        data = _interpolate_env_placeholders(data)
+    if apply_profiles:
+        data = _apply_active_profile(data)
+    return Config.model_validate(data)
+
+
+def _atomic_write_json(path: Path, data: dict) -> None:
+    """Write JSON atomically to avoid readers observing partial content."""
+    tmp_path = path.with_name(f".{path.name}.tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp_path, path)
 
 
 def _migrate_config(data: dict) -> dict:

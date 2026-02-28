@@ -1066,7 +1066,7 @@ def run_webui(
       <li>{t("For TG-heavy usage, keep", "主用 TG 时建议保持")} <code>sendToolHints=false</code></li>
       <li>{t("allowFrom supports both plain IDs and env placeholders; team sharing usually prefers env placeholders.", "allowFrom 同时支持明文和环境变量占位；团队共享配置通常建议用 env 占位。")}</li>
     </ul>
-    <div class="muted">{t("After changing channel token/secret, restart gateway manually in your deployment environment.", "修改渠道 token/secret 后，请在你的部署环境里手动重启 gateway。")}</div>
+    <div class="muted">{t("Gateway auto-reloads after config/env changes (usually within a few seconds).", "Gateway 会在配置/环境变更后自动热重载（通常几秒内生效）。")}</div>
   </section>
 </div>
 <form method="post" class="card" style="margin-top:14px">
@@ -1542,8 +1542,8 @@ def run_webui(
                 self._redirect(
                     "/endpoints",
                     msg=t(
-                        f"Default model saved (check passed: {reason}). Restart gateway to apply.",
-                        f"默认模型已保存（检测通过: {reason}）。请重启 gateway 生效。",
+                        f"Default model saved (check passed: {reason}). Gateway will auto-reload shortly.",
+                        f"默认模型已保存（检测通过: {reason}）。Gateway 将自动热重载生效。",
                     ),
                 )
                 return
@@ -1558,8 +1558,8 @@ def run_webui(
                 self._redirect(
                     "/endpoints",
                     msg=t(
-                        "Language/search policy saved. Restart gateway to apply.",
-                        "语言与搜索策略已保存。请重启 gateway 生效。",
+                        "Language/search policy saved. Gateway will auto-reload shortly.",
+                        "语言与搜索策略已保存。Gateway 将自动热重载生效。",
                     ),
                 )
                 return
@@ -1613,8 +1613,8 @@ def run_webui(
                 self._redirect(
                     "/endpoints",
                     msg=t(
-                        "Runtime budget settings saved. Restart gateway to apply.",
-                        "资源策略已保存。请重启 gateway 生效。",
+                        "Runtime budget settings saved. Gateway will auto-reload shortly.",
+                        "资源策略已保存。Gateway 将自动热重载生效。",
                     ),
                 )
                 return
@@ -1630,8 +1630,8 @@ def run_webui(
                     self._redirect(
                         "/endpoints",
                         msg=t(
-                            f"Deleted endpoint: {name}. Restart gateway to apply.",
-                            f"已删除端点: {name}。请重启 gateway 生效。",
+                            f"Deleted endpoint: {name}. Gateway will auto-reload shortly.",
+                            f"已删除端点: {name}。Gateway 将自动热重载生效。",
                         ),
                     )
                     return
@@ -1673,8 +1673,8 @@ def run_webui(
             self._redirect(
                 "/endpoints",
                 msg=t(
-                    f"Endpoint saved: {name}. Restart gateway to apply.",
-                    f"端点已保存: {name}。请重启 gateway 生效。",
+                    f"Endpoint saved: {name}. Gateway will auto-reload shortly.",
+                    f"端点已保存: {name}。Gateway 将自动热重载生效。",
                 ),
             )
 
@@ -1727,8 +1727,8 @@ def run_webui(
                     "/channels",
                     msg=(
                         t(
-                            f"Channel `{selected_channel}` saved (restart gateway if token/secret changed).",
-                            f"渠道 `{selected_channel}` 配置已保存（如改 token/secret，请重启 gateway）。",
+                            f"Channel `{selected_channel}` saved (gateway auto-reloads if token/secret changed).",
+                            f"渠道 `{selected_channel}` 配置已保存（如改 token/secret，Gateway 将自动热重载）。",
                         )
                     ),
                 )
@@ -1742,8 +1742,8 @@ def run_webui(
                 self._redirect(
                     "/channels",
                     msg=t(
-                        "Channels JSON saved (restart gateway if token/secret changed).",
-                        "Channels 配置已保存（如改了 token/secret，请重启 gateway）。",
+                        "Channels JSON saved (gateway auto-reloads if token/secret changed).",
+                        "Channels 配置已保存（如改了 token/secret，Gateway 将自动热重载）。",
                     ),
                 )
                 return
