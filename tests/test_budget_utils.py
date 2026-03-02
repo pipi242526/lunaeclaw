@@ -1,5 +1,5 @@
-from nanobot.config.schema import Config
-from nanobot.utils.budget import collect_runtime_budget_alerts, estimate_tokens_from_chars
+from orbitclaw.config.schema import Config
+from orbitclaw.utils.budget import collect_runtime_budget_alerts, estimate_tokens_from_chars
 
 
 def test_estimate_tokens_from_chars_is_coarse_and_stable():

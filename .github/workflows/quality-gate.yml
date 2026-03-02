@@ -1,0 +1,26 @@
+name: quality-gate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - codex/dev
+
+jobs:
+  incremental-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Incremental lint (changed Python files)
+        run: python scripts/lint_changed.py
+
+      - name: Tests
+        run: uv run pytest -q

@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="OrbitClaw icon">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#0b3d3a"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#34d399"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="120" fill="url(#bg)"/>
+  <circle cx="256" cy="256" r="158" fill="none" stroke="url(#ring)" stroke-width="24" opacity="0.95"/>
+  <circle cx="256" cy="256" r="92" fill="#0b1220" stroke="#67e8f9" stroke-width="8"/>
+  <path d="M256 155 L286 210 L226 210 Z" fill="#34d399"/>
+  <path d="M176 295 C205 260 307 260 336 295 C336 340 302 372 256 372 C210 372 176 340 176 295 Z" fill="#e2e8f0"/>
+  <circle cx="223" cy="293" r="11" fill="#0f172a"/>
+  <circle cx="289" cy="293" r="11" fill="#0f172a"/>
+  <path d="M235 332 Q256 347 277 332" stroke="#0f172a" stroke-width="7" fill="none" stroke-linecap="round"/>
+  <path d="M148 168 L198 198" stroke="#38bdf8" stroke-width="14" stroke-linecap="round"/>
+  <path d="M364 168 L314 198" stroke="#34d399" stroke-width="14" stroke-linecap="round"/>
+</svg>

@@ -1,5 +1,9 @@
-We provide QR codes for joining the HKUDS discussion groups on **WeChat** and **Feishu**.
+# Community
 
-You can join by scanning the QR codes below:
+This repository does not bundle upstream community QR codes.
 
-<img src="https://github.com/HKUDS/.github/blob/main/profile/QR.png" alt="WeChat QR Code" width="400"/>
+If you operate OrbitClaw publicly, add your own community links here, for example:
+
+- Telegram group
+- Discord server
+- WeChat/Feishu QR codes hosted under your own org

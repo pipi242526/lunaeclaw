@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from nanobot.agent.tools.media import FilesHubTool
+from orbitclaw.agent.tools.media import FilesHubTool
 
 
 @pytest.mark.asyncio

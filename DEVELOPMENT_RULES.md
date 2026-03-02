@@ -1,4 +1,4 @@
-# Development Rules (nanobot-s)
+# Development Rules (orbitclaw-s)
 
 This fork follows a pragmatic, lightweight engineering policy.
 
@@ -19,6 +19,11 @@ This fork follows a pragmatic, lightweight engineering policy.
    - Every config mutation path must be reversible (clear fallback or rollback path).
 5. Extension law:
    - New channel / MCP / skill integrations must be plug-in style, with zero invasive changes to the core agent loop.
+6. Evolution law:
+   - Every release must include an upstream patch audit record with explicit accept/reject/defer decisions.
+7. Quality law:
+   - New/modified code must include focused tests and pass incremental lint checks.
+   - Legacy lint debt is allowed temporarily but must never increase unnoticed.
 
 ## 1) Priorities
 
@@ -35,7 +40,7 @@ This fork follows a pragmatic, lightweight engineering policy.
 
 ## 3) File Handling Policy
 
-1. `~/.nanobot/media` = inbound attachments (user-uploaded source files).
+1. `~/.orbitclaw/media` = inbound attachments (user-uploaded source files).
 2. `workspace` = working/intermediate files.
 3. `exports` = generated outputs (reports, transformed files, final artifacts).
 4. Use `files_hub` for listing/deleting in `media|exports`.

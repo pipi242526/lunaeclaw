@@ -1,4 +1,4 @@
-# nanobot 本土化二开：工具与技能治理指南（中文）
+# orbitclaw 本土化二开：工具与技能治理指南（中文）
 
 本文档面向 `codex/dev` 分支，目标是先把工具与技能治理做稳，再逐步替换/新增更符合个人习惯的能力。
 
@@ -19,11 +19,11 @@
 另外：
 
 - `web_search` 已支持 Exa MCP 兼容别名（主代理 + 子代理）
-- `nanobot status` 已增强工具/技能诊断（缺 API key、MCP 命令缺失、过滤状态等）
-- `nanobot doctor` 已支持修复导向诊断（问题原因 + 修复建议）
+- `orbitclaw status` 已增强工具/技能诊断（缺 API key、MCP 命令缺失、过滤状态等）
+- `orbitclaw doctor` 已支持修复导向诊断（问题原因 + 修复建议）
 - 聊天内命令 `/model`：按会话切换模型（不改全局默认）
-- 配置支持 `${ENV_VAR}` 占位符，且会自动读取 `~/.nanobot/.env` / `~/.nanobot/env/*.env`
-- 运行目录已收口：`~/.nanobot/config.json`、`~/.nanobot/.env`、`~/.nanobot/env/`、`~/.nanobot/mcp/`、`~/.nanobot/skills/`
+- 配置支持 `${ENV_VAR}` 占位符，且会自动读取 `~/.orbitclaw/.env` / `~/.orbitclaw/env/*.env`
+- 运行目录已收口：`~/.orbitclaw/config.json`、`~/.orbitclaw/.env`、`~/.orbitclaw/env/`、`~/.orbitclaw/mcp/`、`~/.orbitclaw/skills/`
 
 ## 2. 当前内置工具盘点（Built-in Tools）
 
@@ -47,7 +47,7 @@
 
 ## 3. 当前内置技能盘点（Skills）
 
-仓库自带技能（`nanobot/skills/*/SKILL.md`）：
+仓库自带技能（`orbitclaw/skills/*/SKILL.md`）：
 
 - `memory`：双层记忆（`MEMORY.md` + `HISTORY.md`），常驻技能
 - `cron`：围绕 `cron` 工具的调度与任务用法说明
@@ -71,7 +71,7 @@
 
 适合你这种第三方 API 平台、多模型切换场景：
 
-- 把 API Base / Key 放到 `~/.nanobot/.env` 或 `~/.nanobot/env/*.env`
+- 把 API Base / Key 放到 `~/.orbitclaw/.env` 或 `~/.orbitclaw/env/*.env`
 - `config.json` 中用 `${ENV_VAR}` 占位符引用
 - 这样切换平台和轮换 key 不需要改主配置文件
 
@@ -172,7 +172,7 @@
 }
 ```
 
-说明：发布给他人使用时，建议要求用户自己申请 Exa Key，并在 `~/.nanobot/.env`（或 `~/.nanobot/env/*.env`）里设置 `EXA_API_KEY`。
+说明：发布给他人使用时，建议要求用户自己申请 Exa Key，并在 `~/.orbitclaw/.env`（或 `~/.orbitclaw/env/*.env`）里设置 `EXA_API_KEY`。
 
 说明：
 
@@ -227,13 +227,13 @@ WebUI 已按职责拆分为独立页面：
 
 ### 4.4 导出目录与统一导出工具（轻量）
 
-默认导出目录是 `~/.nanobot/exports`，可通过配置改到你自己的路径：
+默认导出目录是 `~/.orbitclaw/exports`，可通过配置改到你自己的路径：
 
 ```json
 {
   "tools": {
     "filesHub": {
-      "exportsDir": "/data/nanobot-exports"
+      "exportsDir": "/data/orbitclaw-exports"
     }
   }
 }
@@ -389,7 +389,7 @@ WebUI 已按职责拆分为独立页面：
 
 ### 6.2 给技能增加可用性元信息（渐进式）
 
-你当前部分技能已经在 `metadata.nanobot.requires.bins` 中写了依赖（例如 `gh`/`tmux`/`summarize`）。
+你当前部分技能已经在 `metadata.orbitclaw.requires.bins` 中写了依赖（例如 `gh`/`tmux`/`summarize`）。
 
 建议继续统一：
 
@@ -412,7 +412,7 @@ WebUI 已按职责拆分为独立页面：
 
 - 核心模块语法/编译
 - 重点测试（语言策略、文件管理、导出、网页抓取）
-- 可选运行态检查（若本机 PATH 里有 `nanobot`，会执行 `status/doctor`）
+- 可选运行态检查（若本机 PATH 里有 `orbitclaw`，会执行 `status/doctor`）
 
 当前已支持解析这些字段并用于自动隐藏/诊断（缺依赖时）；
 建议后续继续给新增技能补齐元信息，保证 `status` / `doctor` 输出更准确。
@@ -420,7 +420,7 @@ WebUI 已按职责拆分为独立页面：
 ## 6.3 `doctor` 命令（建议优先用来排障）
 
 ```bash
-nanobot doctor
+orbitclaw doctor
 ```
 
 `doctor` 会优先检查：
@@ -448,7 +448,7 @@ nanobot doctor
 启动命令：
 
 ```bash
-nanobot webui
+orbitclaw webui
 ```
 
 默认地址（仅本机监听）：
@@ -460,7 +460,7 @@ http://127.0.0.1:18791/
 可选认证（建议在非本机监听时开启）：
 
 ```bash
-nanobot webui --path-token your_random_path_token
+orbitclaw webui --path-token your_random_path_token
 ```
 
 当前第一版页面（偏配置管理，不是聊天前端）：
@@ -487,38 +487,38 @@ nanobot webui --path-token your_random_path_token
 这轮会验证：
 
 - `docker compose` 启停是否正常
-- 容器内 `nanobot onboard/status/doctor`
+- 容器内 `orbitclaw onboard/status/doctor`
 - WebUI 路径密钥是否已生成
 - `/{path_token}/healthz` 与仪表盘关键字段是否可访问
 
 如果这一步失败，优先先修复容器运行路径，再考虑功能层问题。
 
-## 7. 从外部项目借鉴的设计点（适合 nanobot）
+## 7. 从外部项目借鉴的设计点（适合 orbitclaw）
 
 以下不是“照搬”，而是提炼适合你这套二开路线的部分：
 
 1. Continue（配置分层/工作区覆盖）
 - 灵感：把规则、模型、工具、上下文源拆层管理，支持工作区级覆盖
-- 适合 nanobot：未来把“个人默认配置”和“项目配置”分开（例如 `workspace/.nanobot.project.json`）
+- 适合 orbitclaw：未来把“个人默认配置”和“项目配置”分开（例如 `workspace/.orbitclaw.project.json`）
 
 2. Cline（模式 + Hooks）
 - 灵感：不同模式使用不同工具权限，并支持调用前后钩子
-- 适合 nanobot：后续给 `exec` / `write_file` / `deploy` 类工具做 pre/post hook（审计、确认、日志）
+- 适合 orbitclaw：后续给 `exec` / `write_file` / `deploy` 类工具做 pre/post hook（审计、确认、日志）
 
 3. OpenHands（集中设置入口）
 - 灵感：模型、代理行为、沙箱、外部服务统一放在设置面板/入口
-- 适合 nanobot：继续增强 `nanobot status` / `nanobot doctor`，把“缺什么、如何修”说清楚
+- 适合 orbitclaw：继续增强 `orbitclaw status` / `orbitclaw doctor`，把“缺什么、如何修”说清楚
 
 4. MCP 市场/注册表（发现与安装体验）
 - 灵感：把“可用 MCP 工具”从 scattered README 变成可搜索目录
-- 适合 nanobot：后续加 `nanobot mcp list/recommend`（先做只读推荐，不急着自动安装）
+- 适合 orbitclaw：后续加 `orbitclaw mcp list/recommend`（先做只读推荐，不急着自动安装）
 
 ## 8. 推荐下一步开发路线（按你的方向）
 
 1. 做 `tools.aliases` 的高阶能力（已支持基础版）
 - 可考虑支持 alias chain 检测、冲突策略、只读别名标记
 
-2. 继续增强 `nanobot doctor`
+2. 继续增强 `orbitclaw doctor`
 - 重点输出（下一阶段）：
 - API key 缺失
 - CLI 缺失（`gh`、`tmux`、`summarize` 等）
@@ -549,5 +549,5 @@ nanobot webui --path-token your_random_path_token
 
 - 新能力先做“可配置 + 可回退”
 - 先新增工具，再观察，再决定是否替换默认
-- 每次改动后跑 `nanobot status` 看诊断输出是否符合预期
+- 每次改动后跑 `orbitclaw status` 看诊断输出是否符合预期
 - 用 `tools.aliases` 保持 prompt/习惯稳定，减少模型行为漂移

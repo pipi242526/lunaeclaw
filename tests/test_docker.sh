@@ -18,17 +18,17 @@ cleanup() {
 trap cleanup EXIT
 
 echo "=== Building compose images ==="
-docker compose build nanobot-gateway nanobot-webui
+docker compose build orbitclaw-gateway orbitclaw-webui
 
 echo "=== Starting compose services ==="
-docker compose up -d --force-recreate nanobot-gateway nanobot-webui
+docker compose up -d --force-recreate orbitclaw-gateway orbitclaw-webui
 
 echo "=== Running non-interactive diagnostics inside gateway ==="
 # Keep smoke tests deterministic: avoid onboarding prompts in CI/non-TTY runs.
 run_cli_cmd() {
   local output_file="$1"
   shift
-  timeout -k 5s 90s docker compose run --rm --no-deps nanobot-gateway "$@" >"$output_file" 2>&1 || true
+  timeout -k 5s 90s docker compose run --rm --no-deps orbitclaw-gateway "$@" >"$output_file" 2>&1 || true
 }
 
 STATUS_FILE="/tmp/nanobot_status_smoke.txt"
@@ -52,19 +52,19 @@ check() {
 }
 
 echo "=== Validating status output ==="
-check "$STATUS_OUTPUT" "nanobot Status"
+check "$STATUS_OUTPUT" "orbitclaw Status"
 check "$STATUS_OUTPUT" "Context budget"
 check "$STATUS_OUTPUT" "Budget alerts"
 check "$STATUS_OUTPUT" "Web search provider"
 check "$STATUS_OUTPUT" "MCP servers"
 
 echo "=== Validating doctor output ==="
-check "$DOCTOR_OUTPUT" "nanobot Doctor"
+check "$DOCTOR_OUTPUT" "orbitclaw Doctor"
 check "$DOCTOR_OUTPUT" "Summary"
 check "$DOCTOR_OUTPUT" "Findings"
 
 echo "=== Validating Web UI path-token + healthz ==="
-TOKEN="$(docker compose exec -T nanobot-webui sh -lc 'cat /root/.nanobot/webui.path-token 2>/dev/null || cat /root/.nanobot/webui.path_token 2>/dev/null || true' | tr -d '\r\n')"
+TOKEN="$(docker compose exec -T orbitclaw-webui sh -lc 'cat /root/.orbitclaw/webui.path-token 2>/dev/null || cat /root/.orbitclaw/webui.path_token 2>/dev/null || true' | tr -d '\r\n')"
 if [[ -z "${TOKEN}" ]]; then
   echo "  FAIL: webui path token not generated"
   exit 1

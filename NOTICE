@@ -1,0 +1,20 @@
+OrbitClaw - Attribution Notice
+
+This repository is an independently maintained secondary-development project
+based on the open-source project:
+
+  HKUDS/nanobot
+  https://github.com/HKUDS/nanobot
+
+Original project license: MIT.
+This repository continues distribution under compatible license terms.
+See LICENSE for full text.
+
+Major secondary-development areas in this repository include, but are not limited to:
+- Tooling/skills routing strategy (including MCP-first search integration)
+- Output policy pipeline and language behavior controls
+- WebUI architecture and operational management pages
+- Runtime diagnostics, governance workflows, and release quality gates
+- Resource/token/context governance enhancements
+
+This notice is provided to preserve attribution and clarify project lineage.

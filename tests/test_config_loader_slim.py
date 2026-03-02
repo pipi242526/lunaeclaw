@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from nanobot.config.loader import inspect_config_hints, load_config_strict, save_config
-from nanobot.config.schema import Config, EndpointProviderConfig
+from orbitclaw.config.loader import inspect_config_hints, load_config_strict, save_config
+from orbitclaw.config.schema import Config, EndpointProviderConfig
 
 
 def test_save_config_slims_duplicates_and_legacy_web_search_fields(tmp_path):

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from pathlib import Path
 import time
+from pathlib import Path
 
-from nanobot.gateway.control import (
+from orbitclaw.gateway.control import (
     compute_runtime_config_fingerprint,
     is_gateway_runtime_fresh,
     read_gateway_runtime_state,
@@ -13,7 +13,7 @@ from nanobot.gateway.control import (
 
 def _prepare_home(monkeypatch, tmp_path: Path) -> Path:
     monkeypatch.setenv("HOME", str(tmp_path))
-    root = tmp_path / ".nanobot"
+    root = tmp_path / ".orbitclaw"
     (root / "env").mkdir(parents=True, exist_ok=True)
     return root
 
@@ -46,7 +46,7 @@ def test_runtime_fingerprint_honors_explicit_env_files(monkeypatch, tmp_path):
     explicit = tmp_path / "extra.env"
     config.write_text("{}", encoding="utf-8")
     explicit.write_text("X=1\n", encoding="utf-8")
-    monkeypatch.setenv("NANOBOT_ENV_FILES", str(explicit))
+    monkeypatch.setenv("ORBITCLAW_ENV_FILES", str(explicit))
     first = compute_runtime_config_fingerprint(config)
     explicit.write_text("X=2\n", encoding="utf-8")
     second = compute_runtime_config_fingerprint(config)

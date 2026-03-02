@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 import time
 
-from nanobot.gateway.control import write_gateway_runtime_state
-from nanobot.webui.services import evaluate_gateway_runtime_status
+from orbitclaw.gateway.control import write_gateway_runtime_state
+from orbitclaw.webui.services import evaluate_gateway_runtime_status
 
 
 def _make_cfg(tmp_path):

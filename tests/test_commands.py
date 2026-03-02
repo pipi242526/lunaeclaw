@@ -5,11 +5,11 @@ from unittest.mock import patch
 import pytest
 from typer.testing import CliRunner
 
-from nanobot.cli.commands import app
-from nanobot.config.schema import Config
-from nanobot.providers.litellm_provider import LiteLLMProvider
-from nanobot.providers.openai_codex_provider import _strip_model_prefix
-from nanobot.providers.registry import find_by_model
+from orbitclaw.cli.commands import app
+from orbitclaw.config.schema import Config
+from orbitclaw.providers.litellm_provider import LiteLLMProvider
+from orbitclaw.providers.openai_codex_provider import _strip_model_prefix
+from orbitclaw.providers.registry import find_by_model
 
 runner = CliRunner()
 
@@ -17,10 +17,10 @@ runner = CliRunner()
 @pytest.fixture
 def mock_paths():
     """Mock config/workspace paths for test isolation."""
-    with patch("nanobot.config.loader.get_config_path") as mock_cp, \
-         patch("nanobot.config.loader.save_config") as mock_sc, \
-         patch("nanobot.config.loader.load_config") as mock_lc, \
-         patch("nanobot.utils.helpers.get_workspace_path") as mock_ws:
+    with patch("orbitclaw.config.loader.get_config_path") as mock_cp, \
+         patch("orbitclaw.config.loader.save_config") as mock_sc, \
+         patch("orbitclaw.config.loader.load_config"), \
+         patch("orbitclaw.utils.helpers.get_workspace_path") as mock_ws:
 
         base_dir = Path("./test_onboard_data")
         if base_dir.exists():
@@ -49,7 +49,7 @@ def test_onboard_fresh_install(mock_paths):
     assert result.exit_code == 0
     assert "Created config" in result.stdout
     assert "Created workspace" in result.stdout
-    assert "nanobot is ready" in result.stdout
+    assert "orbitclaw is ready" in result.stdout
     assert config_file.exists()
     assert (workspace_dir / "AGENTS.md").exists()
     assert (workspace_dir / "memory" / "MEMORY.md").exists()

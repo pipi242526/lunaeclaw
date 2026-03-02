@@ -5,12 +5,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.message import MessageTool
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.base import BaseChannel
-from nanobot.channels.telegram import TelegramChannel
-from nanobot.config.schema import TelegramConfig
+from orbitclaw.agent.loop import AgentLoop
+from orbitclaw.agent.tools.message import MessageTool
+from orbitclaw.bus.queue import MessageBus
+from orbitclaw.channels.base import BaseChannel
+from orbitclaw.channels.telegram import TelegramChannel
+from orbitclaw.config.schema import TelegramConfig
 
 
 @dataclass

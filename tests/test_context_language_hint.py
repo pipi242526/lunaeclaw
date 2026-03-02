@@ -3,13 +3,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.context import ContextBuilder
-from nanobot.agent.policy_pipeline import PolicyPipeline
-from nanobot.agent.toolset_builder import ToolsetBuilder
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.bus.queue import MessageBus
-from nanobot.providers.base import LLMResponse
+from orbitclaw.agent.context import ContextBuilder
+from orbitclaw.agent.loop import AgentLoop
+from orbitclaw.agent.policy_pipeline import PolicyPipeline
+from orbitclaw.agent.tools.registry import ToolRegistry
+from orbitclaw.agent.toolset_builder import ToolsetBuilder
+from orbitclaw.bus.queue import MessageBus
+from orbitclaw.providers.base import LLMResponse
 
 
 def test_detect_reply_language_prefers_chinese_for_cjk_text():
@@ -126,7 +126,7 @@ def test_compact_background_text_uses_structural_summary(tmp_path: Path):
 def test_detect_runtime_environment_supports_explicit_override():
     kind, hint = ContextBuilder._detect_runtime_environment(override="docker")
     assert kind == "docker"
-    assert "NANOBOT_RUNTIME_KIND" in hint
+    assert "ORBITCLAW_RUNTIME_KIND" in hint
 
 
 def test_detect_runtime_environment_detects_kubernetes_marker():

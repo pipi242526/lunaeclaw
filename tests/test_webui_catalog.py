@@ -1,12 +1,15 @@
-from nanobot.config.schema import Config
-from nanobot.webui.catalog import (
+from orbitclaw.config.schema import Config
+from orbitclaw.webui.catalog import (
     evaluate_mcp_library_health,
     find_mcp_library_entry,
     install_skill_from_library,
     library_text,
 )
-from nanobot.webui.diagnostics import collect_channel_runtime_issues, collect_tool_policy_diagnostics
-from nanobot.webui.i18n import normalize_ui_lang, reply_language_label, tr, ui_term
+from orbitclaw.webui.diagnostics import (
+    collect_channel_runtime_issues,
+    collect_tool_policy_diagnostics,
+)
+from orbitclaw.webui.i18n import normalize_ui_lang, reply_language_label, tr, ui_term
 
 
 def test_mcp_library_health_not_installed():
@@ -29,7 +32,7 @@ def test_mcp_library_health_missing_env(monkeypatch):
 
 
 def test_install_skill_from_library_to_global_dir(monkeypatch, tmp_path):
-    monkeypatch.setattr("nanobot.webui.catalog.get_global_skills_path", lambda: tmp_path)
+    monkeypatch.setattr("orbitclaw.webui.catalog.get_global_skills_path", lambda: tmp_path)
 
     ok, msg = install_skill_from_library("weather", overwrite=False)
     assert ok, msg

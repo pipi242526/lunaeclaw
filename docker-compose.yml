@@ -3,16 +3,16 @@ x-common-config: &common-config
     context: .
     dockerfile: Dockerfile
   volumes:
-    - ~/.nanobot:/root/.nanobot
+    - ~/.orbitclaw:/root/.orbitclaw
 
 services:
-  nanobot-gateway:
-    container_name: nanobot-gateway
+  orbitclaw-gateway:
+    container_name: orbitclaw-gateway
     <<: *common-config
     command: ["gateway"]
     restart: unless-stopped
     environment:
-      NANOBOT_DATA_DIR: /root/.nanobot
+      ORBITCLAW_DATA_DIR: /root/.orbitclaw
       # Use Debian system CA bundle for Python requests/urllib3 inside the container.
       SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
       REQUESTS_CA_BUNDLE: /etc/ssl/certs/ca-certificates.crt
@@ -28,17 +28,17 @@ services:
           cpus: '0.25'
           memory: 256M
 
-  nanobot-webui:
-    container_name: nanobot-webui
+  orbitclaw-webui:
+    container_name: orbitclaw-webui
     <<: *common-config
     profiles:
       - webui
     command: ["webui", "--host", "0.0.0.0", "--port", "18791"]
     restart: unless-stopped
     environment:
-      NANOBOT_DATA_DIR: /root/.nanobot
+      ORBITCLAW_DATA_DIR: /root/.orbitclaw
       # Optional: set in shell before `docker compose up` to enable Web UI auth.
-      NANOBOT_WEBUI_PATH_TOKEN: ${NANOBOT_WEBUI_PATH_TOKEN:-}
+      ORBITCLAW_WEBUI_PATH_TOKEN: ${ORBITCLAW_WEBUI_PATH_TOKEN:-}
       # Use Debian system CA bundle for Python requests/urllib3 inside the container.
       SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
       REQUESTS_CA_BUNDLE: /etc/ssl/certs/ca-certificates.crt
@@ -54,13 +54,13 @@ services:
           cpus: '0.10'
           memory: 128M
   
-  nanobot-cli:
+  orbitclaw-cli:
     <<: *common-config
     profiles:
       - cli
     command: ["status"]
     environment:
-      NANOBOT_DATA_DIR: /root/.nanobot
+      ORBITCLAW_DATA_DIR: /root/.orbitclaw
       SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
       REQUESTS_CA_BUNDLE: /etc/ssl/certs/ca-certificates.crt
       CURL_CA_BUNDLE: /etc/ssl/certs/ca-certificates.crt
