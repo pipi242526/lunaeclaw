@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat&logo=python&logoColor=white" alt="Python" />
   <img src="https://img.shields.io/badge/Node.js-20%2B-339933?style=flat&logo=nodedotjs&logoColor=white" alt="Node.js" />
   <img src="https://img.shields.io/badge/License-MIT-16a34a?style=flat" alt="License" />
-  <img src="https://img.shields.io/badge/Version-0.1.1-0ea5e9?style=flat" alt="Version" />
+  <img src="https://img.shields.io/badge/Version-0.1.9-0ea5e9?style=flat" alt="Version" />
 </p>
 
 **Language / 语言**: [English](README.md) | [简体中文](README.zh-CN.md)
